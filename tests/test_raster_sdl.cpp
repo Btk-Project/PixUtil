@@ -2,9 +2,16 @@
 
 #define PIXUTIL_SDL_EXTERNAL
 
+// #define PIXUTIL_MALLOC SDL_malloc
+// #define PIXUTIL_REALLOC SDL_realloc
+// #define PIXUTIL_FREE SDL_free
+
+
 #include "../pixutil_raster.hpp"
+#include "../pixutil_fliter.hpp"
 #include "../pixutil.hpp"
 using namespace PixRaster;
+using namespace PixFliter;
 using namespace PixUtil;
 
 int main(){
@@ -74,6 +81,9 @@ int main(){
         });
 
         DrawLine(0,0,x,y,shade);
+
+        DrawCircle(x,y,50,shade);
+        GaussianBlur(view,1,3);
 
         SDL_UpdateWindowSurface(window);
     }

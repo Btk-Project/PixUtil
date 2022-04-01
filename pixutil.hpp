@@ -106,7 +106,7 @@ namespace PixUtil{
         }
         Color to_color() const{
             value_type pix = to_pixel();
-            return view->map_pixel(pix);
+            return view->get_color(pix);
         }
 
         /**
@@ -225,7 +225,7 @@ namespace PixUtil{
          */
         _Pixel<T> at(int x) const{
             if(!view->has_x(x)){
-                throw std::out_of_range("_Pixel::at() out of range");
+                throw std::out_of_range("_Row::at() out of range");
             }
             return _Pixel<T>(view,x,y);
         }
@@ -573,6 +573,9 @@ namespace PixUtil{
             int height() const{
                 return h;
             }
+            const Traits &traits() const{
+                return *this;
+            }
         public:
             using value_type = Pix;
             using iterator = _RowIterator<View>;
@@ -677,7 +680,7 @@ namespace PixUtil{
 
         for(int y = 0;y < src.height();++ y){
             for(int x = 0;x < src.width(); ++x){
-                dst[y][x] = src[y][x];
+                dst[y][x] = src[y][x].to_pixel();
             }
         }
     }
@@ -853,7 +856,8 @@ namespace PixUtil{
      */
     class SDLSurfaceView:public View<Uint32,SDLSurfaceTraits>{
         public:
-            using View<Uint32,SDLSurfaceTraits>::View;
+            using ViewBase = View<Uint32,SDLSurfaceTraits>;
+            using ViewBase::View;
             /**
              * @brief Construct a new SDLSurfaceView object
              * 
@@ -862,6 +866,13 @@ namespace PixUtil{
             SDLSurfaceView(SDL_Surface *surf):
                 View(surf->pixels,surf->w,surf->h,surf->pitch,SDLSurfaceTraits(surf)){
 
+            }
+            SDLSurfaceView(const ViewBase &b):ViewBase(b){}
+            SDLSurfaceView(ViewBase &&b):ViewBase(b){}
+            ~SDLSurfaceView() = default;
+
+            SDLSurfaceView subview(int x,int y,int w,int h) const{
+                return ViewBase::subview(x,y,w,h);
             }
     };
 } // namespace PixUtil
