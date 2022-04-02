@@ -371,7 +371,7 @@ namespace PixUtil{
         }
     };
     /**
-     * @brief Traits for RGBA pixels
+     * @brief Traits for RGBA32 pixels
      * 
      * @tparam T 
      */
@@ -400,14 +400,30 @@ namespace PixUtil{
         }
     };
     /**
-     * @brief Traits for RGB pixels
+     * @brief Traits for RGB24 pixels (24 bit)
      * 
      * @tparam T 
      */
     template<typename T>
-    struct RGBTraits:public PixTraits<T>{
+    struct RGBTraits{
         static_assert(sizeof(T) == sizeof(Uint32),"RGBTraits::T must be 32 bit");
         //TODO: add endianess support
+
+        static constexpr size_t bytes_per_pixel() noexcept{
+            return 3;
+        }
+        static void store_pixel(void *dst,const T &src){
+            reinterpret_cast<Uint8*>(dst)[0] = reinterpret_cast<const Uint8*>(&src)[0];
+            reinterpret_cast<Uint8*>(dst)[1] = reinterpret_cast<const Uint8*>(&src)[1];
+            reinterpret_cast<Uint8*>(dst)[2] = reinterpret_cast<const Uint8*>(&src)[2];
+        }
+        static T load_pixel(const void *src){
+            T pix = 0;
+            reinterpret_cast<Uint8*>(&pix)[0] = reinterpret_cast<const Uint8*>(src)[0];
+            reinterpret_cast<Uint8*>(&pix)[1] = reinterpret_cast<const Uint8*>(src)[1];
+            reinterpret_cast<Uint8*>(&pix)[2] = reinterpret_cast<const Uint8*>(src)[2];
+            return pix;
+        }
 
         static Color get_color(const T pix){
             Color c;
@@ -423,6 +439,27 @@ namespace PixUtil{
             reinterpret_cast<Uint8*>(&pix)[1] = c.g;
             reinterpret_cast<Uint8*>(&pix)[2] = c.b;
             return pix;
+        }
+    };
+    /**
+     * @brief Traits for Grayscale pixels (8 bit)
+     * @note The get / map is only for erase the pixels type(donot use it for conversion)
+     * @tparam T 
+     */
+    template<typename T>
+    struct GrayTraits:public PixTraits<T>{
+        static_assert(sizeof(T) == sizeof(Uint8),"GrayTraits::T must be 8 bit");
+
+        static Color get_color(const T pix){
+            //Convert grayscale to RGB
+            Color c;
+            c.r = c.g = c.b = pix;
+            c.a = 255;
+            return c;
+        }
+        static T     map_color(Color c){
+            //Convert RGBA to grayscale
+            return (Uint32(c.r) + Uint32(c.g) + Uint32(c.b)) / 3;
         }
     };
     /**
@@ -663,7 +700,9 @@ namespace PixUtil{
 
     //RGBA View
     using RGBAView = View<Uint32,RGBATraits<Uint32>>;
+    using GrayView = View<Uint8,GrayTraits<Uint8>>;
     using RGBView = View<Uint32,RGBTraits<Uint32>>;
+
 
     /**
      * @brief Copy pixels from a view to another view(must have same size)
@@ -826,7 +865,8 @@ namespace PixUtil{
                         break;
                 }
             }
-            Color get_color(Uint32 pix){
+            //FIXME :valgrind reported using uninitialised value here
+            Color get_color(Uint32 pix) const{
                 Color c;
                 SDL_GetRGBA(
                     pix,
@@ -838,7 +878,7 @@ namespace PixUtil{
                 );
                 return c;
             }
-            Uint32 map_color(Color c){
+            Uint32 map_color(Color c) const{
                 return SDL_MapRGBA(
                     surface->format,
                     c.r,

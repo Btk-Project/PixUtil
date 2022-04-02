@@ -8,10 +8,10 @@
 
 
 #include "../pixutil_raster.hpp"
-#include "../pixutil_fliter.hpp"
+#include "../pixutil_filter.hpp"
 #include "../pixutil.hpp"
 using namespace PixRaster;
-using namespace PixFliter;
+using namespace PixFilter;
 using namespace PixUtil;
 
 int main(){
