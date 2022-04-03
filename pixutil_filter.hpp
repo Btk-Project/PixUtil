@@ -1,6 +1,7 @@
 #if !defined(_BTK_PROJECT_PIXUTIL_FILTER_)
 #define _BTK_PROJECT_PIXUTIL_FILTER_
 #include <initializer_list>
+#include <complex>
 #include <cstdlib>
 #include <cmath>
 
@@ -16,12 +17,17 @@
     #define PIXUTIL_MEMCPY ::memcpy
 #endif
 
+#ifndef PIXUTIL_MEMCMP
+    #define PIXUTIL_MEMCMP ::memcmp
+#endif
+
 namespace PixFilter{
 namespace _Math{
     constexpr double PI = 3.14159265358979323846;
     constexpr double PI_2 = PI / 2;
     constexpr double PI_4 = PI / 4;
     constexpr double PI_8 = PI / 8;
+    constexpr double E = 2.71828182845904523536;
 } // namespace _Math
 } // namespace PixFilter
 
@@ -119,6 +125,8 @@ namespace _Mem{
         private:
             size_t _size;
             T *_data;
+        template<typename U>
+        friend class Matrix;
     };
     /**
      * @brief Simplest matrix
@@ -150,6 +158,37 @@ namespace _Mem{
                 _col(col),
                 _data(static_cast<T*>(PIXUTIL_MALLOC(sizeof(T) * row * col)))
             {}
+            /**
+             * @brief Construct a new Matrix object from vector
+             * 
+             * @param row 
+             * @param col 
+             * @param vec 
+             */
+            Matrix(size_t row,size_t col,const Vector<T> &vec):
+                _row(row),
+                _col(col),
+                _data(static_cast<T*>(PIXUTIL_MALLOC(sizeof(T) * row * col)))
+            {
+                PIXUTIL_ASSERT(row * col == vec.size());
+                PIXUTIL_MEMCPY(_data,vec.data(),sizeof(T) * row * col);
+            }
+            /**
+             * @brief Construct a new Matrix object from vector
+             * 
+             * @param row 
+             * @param col 
+             * @param vec 
+             */
+            Matrix(size_t row,size_t col,Vector<T> &&vec):
+                _row(row),
+                _col(col),
+                _data(vec.data()){
+
+                PIXUTIL_ASSERT(row * col == vec.size());
+                vec._data = nullptr;
+                vec._size = 0;
+            }
             /**
              * @brief Construct a new Matrix object
              * 
@@ -225,6 +264,33 @@ namespace _Mem{
             }
             const T *data() const{
                 return _data;
+            }
+            /**
+             * @brief Compare two Matrix
+             * 
+             * @param mat 
+             * @return true 
+             * @return false 
+             */
+            bool compare(const Matrix &mat) const{
+                if(_row != mat._row || _col != mat._col){
+                    return false;
+                }
+                return PIXUTIL_MEMCMP(_data,mat._data,sizeof(T) * _row * _col) == 0;
+            }
+            template<typename Elem>
+            bool compare(const Matrix<Elem> &mat) const{
+                if(_row != mat._row || _col != mat._col){
+                    return false;
+                }
+                for(size_t i = 0;i < _row;++i){
+                    for(size_t j = 0;j < _col;++j){
+                        if(_data[i * _col + j] != static_cast<T>(mat._data[i * _col + j])){
+                            return false;
+                        }
+                    }
+                }
+                return true;
             }
 
             //Operator
@@ -368,41 +434,61 @@ namespace _Mem{
                 }
                 return tmp;
             }
+        public:
+            //Helper / cast
+            template<typename Elem>
+            Matrix<Elem> cast() const{
+                return *this;
+            }
+
+            operator Vector<T>() const{
+                Vector<T> vec(_row * _col);
+
+                PIXUTIL_MEMCPY(vec.data(),_data,sizeof(T) * _row * _col);
+                
+                return vec;
+            }
+
+            template<typename Elem>
+            operator Vector<Elem>() const{
+                Vector<Elem> vec(_row * _col);
+
+                for(size_t i = 0;i < _row * _col;++i){
+                    vec.at(i) = static_cast<Elem>(_data[i]);
+                }
+                
+                return vec;
+            }
         private:
             size_t _row;
             size_t _col;
             T *_data;
     };
-    // template<typename T>
-    // struct ImportMatrix{
-    //     ImportMatrix(size_t row,size_t col):
-    //         _row(row),
-    //         _col(col){
 
-    //     }
-
-    //     size_t _row;
-    //     size_t _col;
-    // };
-
-    // template<typename T,typename T2>
-    // Matrix<T> operator <<(ImportMatrix<T> opt,std::initializer_list<T2> l){
-    //     Matrix<T> mat(opt._row,opt._col);
-
-    //     size_t row = 0;
-    //     size_t col = 0;
-
-    //     for(auto v:l){
-    //         mat.at(row,col) = v;
-    //         row += 1;
-    //         if(row == opt._row){
-    //             row = 0;
-    //             col += 1;
-    //         }
-    //     }
-
-    //     return mat;
-    // }
+    #ifdef PIXUTIL_MATRIX_IO
+    /**
+     * @brief Print matrix
+     * 
+     * @tparam T 
+     * @param os 
+     * @param mat 
+     * @return std::ostream& 
+     */
+    template<typename T>
+    std::ostream &operator <<(std::ostream &os,const Matrix<T> &mat){
+        for(size_t i = 0;i < mat.row();++i){
+            os << "[";
+            for(size_t j = 0;j < mat.col();++j){
+                os << mat.at(i,j) << " ";
+                if(j != mat.col() - 1){
+                    os << ", ";
+                }
+            }
+            os << "]" << std::endl;
+        }
+        return os;
+    }
+    #endif
 } // namespace _Mem
 } // namespace PixFilter
 
@@ -449,6 +535,7 @@ namespace PixFilter{
                 }
             }
         }
+        //Fast Fourier Transform
     }
 
     template<typename View>
@@ -631,6 +718,31 @@ namespace PixFilter{
         }
 
         return mat;
+    }
+
+    //some useful 2D Filter matrix 
+    
+    /**
+     * @brief Sharpen filter
+     * 
+     */
+    inline Matrix<double> SharpenFilter(){
+        return ImportMatrix<double,3,3>(
+            -1.0f, -1.0f, -1.0f,
+            -1.0f,  9.0f, -1.0f,
+            -1.0f, -1.0f, -1.0f
+        );
+    }
+    /**
+     * @brief Edge detect filter
+     * 
+     */
+    inline Matrix<double> EdgeDetectFilter(){
+        return ImportMatrix<double,3,3>(
+            -1.0f, -1.0f, -1.0f,
+            -1.0f,  8.0f, -1.0f,
+            -1.0f, -1.0f, -1.0f
+        );
     }
 }
 

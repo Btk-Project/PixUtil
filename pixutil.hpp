@@ -371,6 +371,173 @@ namespace PixUtil{
         }
     };
     /**
+     * @brief Internal ShiftTraits
+     * 
+     * @tparam Mask 
+     * @tparam Shift 
+     * @tparam !(Mask & 0x01) 
+     */
+    template<Uint32 Mask,Uint8 Shift = 0,bool v = !(Mask & 0x01) && (Mask != 0)>
+    struct _ShiftTraits;
+
+    template<Uint32 Mask,Uint8 Shift>
+    struct _ShiftTraits<Mask,Shift,false>{
+        static constexpr Uint32  mask_value = Mask;
+        static constexpr Uint8  shift_value = Shift;
+    };
+    template<Uint32 Mask,Uint8 Shift>
+    struct _ShiftTraits<Mask,Shift,true>{
+        static constexpr Uint32  mask_value = _ShiftTraits<(Mask >> 1),Shift + 1>::mask_value;
+        static constexpr Uint8  shift_value = _ShiftTraits<(Mask >> 1),Shift + 1>::shift_value;
+    };
+    /**
+     * @brief Internal Loss Traits
+     * 
+     * @tparam Mask 
+     * @tparam Loss 
+     * @tparam (Mask & 0x01) 
+     */
+    template<Uint32 Mask,Uint8 Loss = 8,bool v = (Mask & 0x01) && (Mask != 0)>
+    struct _LossTraits;
+
+    template<Uint32 Mask,Uint8 Loss>
+    struct _LossTraits<Mask,Loss,false>{
+        static constexpr Uint32 mask_value = Mask;
+        static constexpr Uint8  loss_value = Loss;
+    };
+    template<Uint32 Mask,Uint8 Loss>
+    struct _LossTraits<Mask,Loss,true>{
+        static constexpr Uint32 mask_value = _LossTraits<(Mask >> 1),Loss - 1>::mask_value;
+        static constexpr Uint8  loss_value = _LossTraits<(Mask >> 1),Loss - 1>::loss_value;
+    };
+    /**
+     * @brief Traits for Get Shift from a Uint32 Mask
+     * 
+     * @tparam Mask 
+     */
+    template<Uint32 Mask>
+    using ShiftTraits = _ShiftTraits<Mask>;
+    /**
+     * @brief Traits for Get Loss from a Uint32 Mask
+     * 
+     * @tparam Mask 
+     */
+    template<Uint32 Mask>
+    using LossTraits = _LossTraits<_ShiftTraits<Mask>::mask_value>;
+    /**
+     * @brief Traits for Generic RGBA Pixel like SDL_PixelFormat
+     * 
+     * @tparam T Pixel type
+     * @tparam BitsPerPixel
+     * @tparam Rmask
+     * @tparam Gmask
+     * @tparam Bmask
+     * @tparam Amask
+     */
+    template<
+        typename T,//< Pixel type
+        size_t _BitsPerPixel,
+        Uint32 _Rmask,
+        Uint32 _Gmask,
+        Uint32 _Bmask,
+        Uint32 _Amask
+    >
+    struct RGBACommonTraits{
+
+        //Get bytes per pixel
+        static constexpr size_t BytesPerPixel = (_BitsPerPixel + 7) / 8;
+        static constexpr size_t BitsPerPixel = _BitsPerPixel;
+        //Get Rmask,Gmask,Bmask,Amask
+        static constexpr Uint32 Rmask = _Rmask;
+        static constexpr Uint32 Gmask = _Gmask;
+        static constexpr Uint32 Bmask = _Bmask;
+        static constexpr Uint32 Amask = _Amask;
+        //Get Rloss,Gloss,Bloss,Aloss
+        static constexpr Uint8  Rloss = LossTraits<Rmask>::loss_value;
+        static constexpr Uint8  Gloss = LossTraits<Gmask>::loss_value;
+        static constexpr Uint8  Bloss = LossTraits<Bmask>::loss_value;
+        static constexpr Uint8  Aloss = LossTraits<Amask>::loss_value;
+        //Get Rshift,Gshift,Bshift,Ashift
+        static constexpr Uint8  Rshift = ShiftTraits<Rmask>::shift_value;
+        static constexpr Uint8  Gshift = ShiftTraits<Gmask>::shift_value;
+        static constexpr Uint8  Bshift = ShiftTraits<Bmask>::shift_value;
+        static constexpr Uint8  Ashift = ShiftTraits<Amask>::shift_value;
+
+        static_assert(sizeof(T) >= BytesPerPixel,"Invalid BytesPerPixel");
+        static_assert(sizeof(T) == sizeof(Uint32),"Invalid BytesPerPixel");
+
+        //Load / save pixel
+        static constexpr size_t bytes_per_pixel() noexcept{
+            return BytesPerPixel;
+        }
+        static void store_pixel(void *dst,const T &src){
+            switch(BytesPerPixel){
+                case 1:
+                    *(Uint8*)dst = src;
+                    break;
+                case 2:
+                    *(Uint16*)dst = src;
+                    break;
+                case 3:
+                    *(Uint8*)dst = src;
+                    *(Uint8*)((Uint8*)dst + 1) = src >> 8;
+                    *(Uint8*)((Uint8*)dst + 2) = src >> 16;
+                    break;
+                case 4:
+                    *(Uint32*)dst = src;
+                    break;
+                default:
+                    break;
+            }
+        }
+        static T    load_pixel(const void *src){
+            T pix;
+            switch(BytesPerPixel){
+                case 1:
+                    pix = *(T*)src;
+                    break;
+                case 2:
+                    pix = *(T*)src;
+                    break;
+                case 3:
+                    pix = *(T*)src;
+                    break;
+                case 4:
+                    pix = *(T*)src;
+                    break;
+                default:
+                    break;
+            }
+            return pix;
+        }
+
+        static Color get_color(const T pix){
+            Color c;
+            c.r = (pix & Rmask) >> Rshift;
+            c.g = (pix & Gmask) >> Gshift;
+            c.b = (pix & Bmask) >> Bshift;
+            c.a = (pix & Amask) >> Ashift;
+
+            //Process with Loss
+            c.r = (c.r << Rloss) | (c.r >> (8 - Rloss));
+            c.g = (c.g << Gloss) | (c.g >> (8 - Gloss));
+            c.b = (c.b << Bloss) | (c.b >> (8 - Bloss));
+            c.a = (c.a << Aloss) | (c.a >> (8 - Aloss));
+            return c;
+        }
+        static T map_color(const Color &c){
+            T pix;
+            //Map Color by Loss Shift and Mask
+            pix =  (c.r >> Rloss) << Rshift;
+            pix |= (c.g >> Gloss) << Gshift;
+            pix |= (c.b >> Bloss) << Bshift;
+            //Because Alpha may not be used,so we need to process it by Amask
+            pix |= Uint32(c.a >> Aloss) << Ashift & Amask;
+
+            return pix;
+        }
+    };
+    /**
      * @brief Traits for RGBA32 pixels
      * 
      * @tparam T 
@@ -697,12 +864,44 @@ namespace PixUtil{
             }
 
     };
+    //RGBA Common View
+    template<size_t Bits,Uint32 Rmask,Uint32 Gmask,Uint32 Bmask,Uint32 Amask = 0>
+    using RGBACommonView = View<Uint32,RGBACommonTraits<Uint32,Bits,Rmask,Gmask,Bmask,Amask>>;
 
     //RGBA View
     using RGBAView = View<Uint32,RGBATraits<Uint32>>;
     using GrayView = View<Uint8,GrayTraits<Uint8>>;
     using RGBView = View<Uint32,RGBTraits<Uint32>>;
 
+    #ifdef PIXUTIL_COMMON_PIXELFORMAT
+    //Add common pixel format by using Rmask,Gmask,Bmask,Amask
+    using BGRAView = RGBACommonView<32,0xff0000,0x00ff00,0x0000ff,0xff000000>;
+    // using RGBAView = RGBACommonView<32,0x000000ff,0x0000ff00,0x00ff0000,0xff000000>;
+    using ARGBView = RGBACommonView<32,0x00ff0000,0x0000ff00,0x000000ff,0xff000000>;
+    using ABGRView = RGBACommonView<32,0x0000ff00,0x00ff0000,0xff000000,0x000000ff>;
+    using XBGRView = RGBACommonView<32,0x000000ff,0x0000ff00,0x00ff0000,0x00000000>;
+    using XRGBView = RGBACommonView<32,0x00ff0000,0x0000ff00,0x000000ff,0x00000000>;
+    using BGRXView = RGBACommonView<32,0x00ff0000,0x0000ff00,0x000000ff,0x00000000>;
+    using RGBXView = RGBACommonView<32,0x000000ff,0x0000ff00,0x00ff0000,0x00000000>;
+    //24
+    using BGRView = RGBACommonView<24,0x00ff0000,0x0000ff00,0x000000ff,0x00000000>;
+    // using RGBView = RGBACommonView<24,0x000000ff,0x0000ff00,0x00ff0000,0x00000000>;
+    //16
+    using RGB565View = RGBACommonView<16,0x0000f800,0x000007e0,0x0000001f,0x00000000>;
+    using BGR565View = RGBACommonView<16,0x0000001f,0x000007e0,0x0000f800,0x00000000>;
+    using RGB555View = RGBACommonView<16,0x00007c00,0x000003e0,0x0000001f,0x00000000>;
+    using BGR555View = RGBACommonView<16,0x0000001f,0x000003e0,0x00007c00,0x00000000>;
+    //8
+    using RGB332View = RGBACommonView<8,0x000000e0,0x0000001c,0x00000003,0x00000000>;
+    //4
+    using RGB444View = RGBACommonView<4,0x00000f00,0x000000f0,0x0000000f,0x00000000>;
+    using BGR444View = RGBACommonView<4,0x0000000f,0x000000f0,0x00000f00,0x00000000>;
+    using RGB422View = RGBACommonView<4,0x00000f00,0x000000f0,0x0000000f,0x00000000>;
+    using BGR422View = RGBACommonView<4,0x0000000f,0x000000f0,0x00000f00,0x00000000>;
+    //2
+    using RGB211View = RGBACommonView<2,0x00000c00,0x00000300,0x00000001,0x00000000>;
+    using BGR211View = RGBACommonView<2,0x00000001,0x00000300,0x00000c00,0x00000000>;
+    #endif
 
     /**
      * @brief Copy pixels from a view to another view(must have same size)
@@ -768,6 +967,8 @@ namespace PixUtil{
 
 
 #if defined(PIXUTIL_SDL_EXTERNAL)
+
+#include <SDL2/SDL_surface.h>
 
 namespace PixUtil{
     /**
@@ -915,6 +1116,89 @@ namespace PixUtil{
                 return ViewBase::subview(x,y,w,h);
             }
     };
+
+    //Helper for show view in a window,like opencv
+
+    template<class View>
+    void SDLShowView(const View &view){
+        //Create a surface and copy the view to it
+        SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(
+            0,
+            view.width(),
+            view.height(),
+            32,
+            SDL_PIXELFORMAT_RGBA32
+        );
+        SDLSurfaceView sdl_view(surface);
+        CopyPixels(sdl_view,view);
+        //Create done
+        SDL_Window *window = SDL_CreateWindow(
+            "SDLView",
+            SDL_WINDOWPOS_UNDEFINED,
+            SDL_WINDOWPOS_UNDEFINED,
+            view.width(),
+            view.height(),
+            SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        );
+        SDL_Renderer *renderer = SDL_CreateRenderer(
+            window,
+            -1,
+            0
+        );
+        SDL_Texture *texture = SDL_CreateTextureFromSurface(
+            renderer,
+            surface
+        );
+        //Bind
+        SDL_SetWindowData(window,"SDLViewSurface",surface);
+        SDL_SetWindowData(window,"SDLViewTexture",texture);
+        //End
+    }
+    /**
+     * @brief Wait for all window closed
+     * 
+     */
+    inline void SDLWaitForQuit(){
+        SDL_Event event;
+        while(SDL_WaitEvent(&event)){
+            if(event.type == SDL_QUIT){
+                break;
+            }
+            if(event.type == SDL_WINDOWEVENT){
+                SDL_Window *window = SDL_GetWindowFromID(event.window.windowID);
+                if(window == nullptr){
+                    continue;
+                }
+                if(event.window.event == SDL_WINDOWEVENT_EXPOSED){
+                    //Get texture
+                    SDL_Renderer *renderer = SDL_GetRenderer(window);
+                    SDL_Texture  *texture = static_cast<SDL_Texture *>(
+                        SDL_GetWindowData(window,"SDLViewTexture")
+                    );
+
+                    //Draw 
+                    SDL_RenderClear(renderer);
+                    SDL_RenderCopy(renderer,texture,nullptr,nullptr);
+                    SDL_RenderPresent(renderer);
+                    continue;
+                }
+                else if(event.window.event == SDL_WINDOWEVENT_CLOSE){
+                    //Cleanup
+                    SDL_DestroyTexture(static_cast<SDL_Texture *>(
+                        SDL_GetWindowData(window,"SDLViewTexture")
+                    ));
+                    SDL_FreeSurface(static_cast<SDL_Surface *>(
+                        SDL_GetWindowData(window,"SDLViewSurface")
+                    ));
+                    SDL_DestroyRenderer(
+                        SDL_GetRenderer(window)
+                    );
+                    SDL_DestroyWindow(window);
+                    continue;
+                }
+            }
+        }
+    }
 } // namespace PixUtil
 
 

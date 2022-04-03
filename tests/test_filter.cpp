@@ -1,6 +1,9 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 
+#include <iostream>
+
+#define PIXUTIL_MATRIX_IO
 #define PIXUTIL_SDL_EXTERNAL
 
 #include "../pixutil_filter.hpp"
@@ -15,7 +18,10 @@ int main(int argc,char **argv){
         //WINDOW w h
     }
 
-    auto mat1 = ImportMatrix<double,3,3>(1, 1, 1, 1, -8, 1, 1, 1, 1);
+    auto mat1 = EdgeDetectFilter();
+
+    std::cout << "mat1: " << mat1 << std::endl;
+
 
     //Print mat1
     SDL_Window *win;

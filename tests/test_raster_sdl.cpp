@@ -77,13 +77,20 @@ int main(){
         FillRect(view,0,0,640,480,Color{0,0,0,255});
 
         auto shade = AddScissor(0,0,640,480,[&](int x,int y){
-            view.at(x,y) = Color{255,0,0,255};
+            view.at(x,y) = Color{
+                Uint8(rand() % 255),
+                Uint8(rand() % 255),
+                Uint8(rand() % 255),
+                255
+            };
         });
 
         DrawLine(0,0,x,y,shade);
 
         DrawCircle(x,y,50,shade);
-        GaussianBlur(view,1,3);
+        //Top left
+        
+        FillTriangle(x+100,y + 100,x - 100,y - 200,x - 60,y + 200,shade);
 
         SDL_UpdateWindowSurface(window);
     }
