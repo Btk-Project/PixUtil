@@ -1,5 +1,4 @@
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
 
 #include <iostream>
 
@@ -7,6 +6,7 @@
 #define PIXUTIL_SDL_EXTERNAL
 
 #include "../pixutil_filter.hpp"
+#include "../pixutil_image.hpp"
 
 using namespace PixFilter;
 using namespace PixUtil;
@@ -36,7 +36,21 @@ int main(int argc,char **argv){
         }
         if(event.type == SDL_DROPFILE){
             //Drop test file
-            SDL_Surface *surf = IMG_Load(event.drop.file);
+            // SDL_Surface *surf = IMG_Load(event.drop.file);
+            auto bitmap = PixImage::LoadFromFilename(event.drop.file);
+
+            if(bitmap.empty()){
+                continue;
+            }
+            SDL_Surface *surf;
+            surf = SDL_CreateRGBSurfaceWithFormatFrom(
+                bitmap.pixels,
+                bitmap.w,
+                bitmap.h,
+                32,
+                bitmap.pitch,
+                SDL_PIXELFORMAT_RGBA32
+            );
             if(surf == nullptr){
                 printf("Load failed\n");
                 continue;
@@ -87,6 +101,8 @@ int main(int argc,char **argv){
             tex = SDL_CreateTextureFromSurface(render,dst);
             SDL_FreeSurface(surf);
             SDL_FreeSurface(dst);
+
+            PixImage::Free(bitmap.pixels);
         }
 
         SDL_RenderClear(render);

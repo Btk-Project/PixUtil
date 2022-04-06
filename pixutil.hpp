@@ -50,9 +50,17 @@ namespace PixUtil{
     #else
     using Color = PIXUTIL_COLOR;
     #endif
-
-
-
+    /**
+     * @brief C++ 11 void_t
+     * 
+     */
+    template<typename...>
+    using void_t = void;
+    /**
+     * @brief Pixel reference
+     * 
+     * @tparam T 
+     */
     template<typename T>
     struct _Pixel{
         T *view;
@@ -948,6 +956,105 @@ namespace PixUtil{
         }
     }
     /**
+     * @brief Convert RGB to Gray
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst 
+     * @param src 
+     */
+    template<typename View1,typename View2>
+    void RGBToGray(View1 &dst,const View2 &src){
+        PIXUTIL_ASSERT(dst.width() == src.width());
+        PIXUTIL_ASSERT(dst.height() == src.height());
+
+        for(int y = 0;y < src.height();++ y){
+            for(int x = 0;x < src.width(); ++x){
+                Color c = src[y][x];
+                Uint8 pix = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
+                dst[y][x] = pix;
+            }
+        }
+    }
+    /**
+     * @brief Using Nearest sampling to scale a view to another view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst 
+     * @param src 
+     */
+    template<typename View1,typename View2>
+    void NearestScale(View1 &dst,const View2 &src){
+        //Nearest sampling
+        int out_w = dst.width();
+        int out_h = dst.height();
+        int in_w = src.width();
+        int in_h = src.height();
+        //Begin sampling
+        for(int y = 0;y < out_h;++ y){
+            for(int x = 0;x < out_w;++ x){
+                //Get the source pixel
+                int in_x = x * in_w / out_w + 0.5;
+                int in_y = y * in_h / out_h + 0.5;
+
+                //Assert the pixel is in the source view
+                PIXUTIL_ASSERT(in_x >= 0 && in_x < in_w);
+                PIXUTIL_ASSERT(in_y >= 0 && in_y < in_h);
+                
+                dst[y][x] = src[in_y][in_x].to_color();
+            }
+        }
+    }
+    /**
+     * @brief Using Bilinear sampling to scale a view to another view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst 
+     * @param src 
+     */
+    template<typename View1,typename View2>
+    void BilinearScale(View1 &dst,const View2 &src){
+        //Bilinear sampling
+        int out_w = dst.width();
+        int out_h = dst.height();
+        int in_w = src.width();
+        int in_h = src.height();
+        //Begin sampling
+        for(int y = 0;y < out_h;++ y){
+            for(int x = 0;x < out_w;++ x){
+                //Get the source pixel
+                int in_x = x * in_w / out_w;
+                int in_y = y * in_h / out_h;
+
+                //Assert the pixel is in the source view
+                PIXUTIL_ASSERT(in_x >= 0 && in_x < in_w);
+                PIXUTIL_ASSERT(in_y >= 0 && in_y < in_h);
+
+                //Get the source pixel
+                Color c00 = src[in_y][in_x];
+                Color c01 = src[in_y][in_x + 1];
+                Color c10 = src[in_y + 1][in_x];
+                Color c11 = src[in_y + 1][in_x + 1];
+
+                //Get the weight
+                float wx = x * in_w / out_w - in_x;
+                float wy = y * in_h / out_h - in_y;
+
+                //Get the color
+                Color c;
+                c.r = c00.r * (1 - wx) * (1 - wy) + c01.r * wx * (1 - wy) + c10.r * (1 - wx) * wy + c11.r * wx * wy;
+                c.g = c00.g * (1 - wx) * (1 - wy) + c01.g * wx * (1 - wy) + c10.g * (1 - wx) * wy + c11.g * wx * wy;
+                c.b = c00.b * (1 - wx) * (1 - wy) + c01.b * wx * (1 - wy) + c10.b * (1 - wx) * wy + c11.b * wx * wy;
+                c.a = c00.a * (1 - wx) * (1 - wy) + c01.a * wx * (1 - wy) + c10.a * (1 - wx) * wy + c11.a * wx * wy;
+                
+                dst[y][x] = c;
+            }
+        }
+    }
+
+    /**
      * @brief Namespace for blend (dst,src) => new
      * 
      */
@@ -962,7 +1069,7 @@ namespace PixUtil{
             return src;
         }
     } // namespace Blend
-    
+
 } // namespace PixUtil
 
 
@@ -1120,7 +1227,25 @@ namespace PixUtil{
     //Helper for show view in a window,like opencv
 
     template<class View>
-    void SDLShowView(const View &view){
+    void SDLShowView(const View &view,const char *title = nullptr){
+        static int n = 0;
+        if(title == nullptr){
+            char tmp_buffer[128] = {0};
+            size_t len;
+            SDL_snprintf(
+                tmp_buffer,
+                sizeof(tmp_buffer),
+                "SDLView [%d] - %d * %d",
+                n,
+                view.width(),
+                view.height()
+            );
+            n += 1;
+            //Copy to title
+            len = SDL_strlen(tmp_buffer);
+            title = SDL_stack_alloc(char,len + 1);
+            SDL_strlcpy(const_cast<char*>(title),tmp_buffer,len + 1);
+        }
         //Create a surface and copy the view to it
         SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(
             0,
@@ -1130,10 +1255,15 @@ namespace PixUtil{
             SDL_PIXELFORMAT_RGBA32
         );
         SDLSurfaceView sdl_view(surface);
-        CopyPixels(sdl_view,view);
+        //Convert
+        for(int y = 0;y < view.height();++y){
+            for(int x = 0;x < view.width();++x){
+                sdl_view[y][x] = view[y][x].to_color();
+            }
+        }
         //Create done
         SDL_Window *window = SDL_CreateWindow(
-            "SDLView",
+            title,
             SDL_WINDOWPOS_UNDEFINED,
             SDL_WINDOWPOS_UNDEFINED,
             view.width(),
@@ -1150,9 +1280,9 @@ namespace PixUtil{
             surface
         );
         //Bind
-        SDL_SetWindowData(window,"SDLViewSurface",surface);
         SDL_SetWindowData(window,"SDLViewTexture",texture);
         //End
+        SDL_FreeSurface(surface);
     }
     /**
      * @brief Wait for all window closed
@@ -1164,7 +1294,7 @@ namespace PixUtil{
             if(event.type == SDL_QUIT){
                 break;
             }
-            if(event.type == SDL_WINDOWEVENT){
+            else if(event.type == SDL_WINDOWEVENT){
                 SDL_Window *window = SDL_GetWindowFromID(event.window.windowID);
                 if(window == nullptr){
                     continue;
@@ -1175,10 +1305,26 @@ namespace PixUtil{
                     SDL_Texture  *texture = static_cast<SDL_Texture *>(
                         SDL_GetWindowData(window,"SDLViewTexture")
                     );
+                    int win_w,win_h;
+                    int tex_w,tex_h;
 
+                    SDL_QueryTexture(texture,nullptr,nullptr,&tex_w,&tex_h);
+                    SDL_GetWindowSize(window,&win_w,&win_h);
+                    //Calc the texture rect to fit the window
+                    //Keep the aspect ratio
+                    SDL_Rect rect;
+                    if(tex_w * win_h > tex_h * win_w){
+                        rect.w = win_w;
+                        rect.h = tex_h * win_w / tex_w;
+                    }else{
+                        rect.w = tex_w * win_h / tex_h;
+                        rect.h = win_h;
+                    }
+                    rect.x = (win_w - rect.w) / 2;
+                    rect.y = (win_h - rect.h) / 2;
                     //Draw 
                     SDL_RenderClear(renderer);
-                    SDL_RenderCopy(renderer,texture,nullptr,nullptr);
+                    SDL_RenderCopy(renderer,texture,nullptr,&rect);
                     SDL_RenderPresent(renderer);
                     continue;
                 }
@@ -1186,9 +1332,6 @@ namespace PixUtil{
                     //Cleanup
                     SDL_DestroyTexture(static_cast<SDL_Texture *>(
                         SDL_GetWindowData(window,"SDLViewTexture")
-                    ));
-                    SDL_FreeSurface(static_cast<SDL_Surface *>(
-                        SDL_GetWindowData(window,"SDLViewSurface")
                     ));
                     SDL_DestroyRenderer(
                         SDL_GetRenderer(window)

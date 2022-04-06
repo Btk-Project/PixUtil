@@ -33,3 +33,5 @@
 
 # Vscode files
 .vscode
+.xmake
+build
