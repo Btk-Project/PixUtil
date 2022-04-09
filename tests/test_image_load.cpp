@@ -6,5 +6,5 @@ int main(int argc,char **argv){
         printf("Load failed\n");
         return -1;
     }
-    PIXUTIL_FREE(bitmap.pixels);
+    PixImage::Free(bitmap.pixels);
 }

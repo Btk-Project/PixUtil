@@ -15,6 +15,42 @@
 #else
     #define PIXUTIL_THROW(x) throw x
 #endif
+//Multi Computation
+#ifdef PIXUTIL_OMP
+    //Check if OMP is available
+    #ifndef _OPENMP
+        #error "OpenMP is not available,enable it on your compiler"
+    #endif
+
+    #define PIXUTIL_OMP_DECL(x) _Pragma(x)
+    #include <omp.h>
+#else
+    #define PIXUTIL_OMP_DECL(x) 
+#endif
+//Memory Manage
+#ifndef PIXUTIL_MALLOC
+    #define PIXUTIL_REALLOC std::realloc
+    #define PIXUTIL_MALLOC std::malloc
+    #define PIXUTIL_FREE std::free
+    #include <cstdlib>
+#endif
+
+#ifndef PIXUTIL_MEMCPY
+    #define PIXUTIL_MEMCPY ::memcpy
+#endif
+
+#ifndef PIXUTIL_MEMCMP
+    #define PIXUTIL_MEMCMP ::memcmp
+    #include <cstring>
+#endif
+
+#ifndef PIXUTIL_MEMSET
+    #define PIXUTIL_MEMSET ::memset
+    #include <cstring>
+#endif
+
+#define PIXUTIL_NOEXCEPT_IF(x) noexcept(noexcept(x))
+#define PIXUTIL_UNUSED(x) (void)(x)
 
 namespace PixUtil{
     //Basic types
@@ -49,6 +85,15 @@ namespace PixUtil{
     };
     #else
     using Color = PIXUTIL_COLOR;
+    #endif
+    //Rect
+    #ifndef PIXUTIL_RECT
+    struct Rect{
+        int x,y;
+        int w,h;
+    };
+    #else
+    using Rect = PIXUTIL_RECT;
     #endif
     /**
      * @brief C++ 11 void_t
@@ -499,19 +544,21 @@ namespace PixUtil{
             }
         }
         static T    load_pixel(const void *src){
-            T pix;
+            T pix = 0;
             switch(BytesPerPixel){
                 case 1:
-                    pix = *(T*)src;
+                    pix = *(Uint8*)src;
                     break;
                 case 2:
-                    pix = *(T*)src;
+                    pix = *(Uint16*)src;
                     break;
                 case 3:
-                    pix = *(T*)src;
+                    pix  = *(Uint8*)src;
+                    pix |= *(Uint8*)((Uint8*)src + 1) << 8;
+                    pix |= *(Uint8*)((Uint8*)src + 2) << 16;
                     break;
                 case 4:
-                    pix = *(T*)src;
+                    pix = *(Uint32*)src;
                     break;
                 default:
                     break;
@@ -534,9 +581,9 @@ namespace PixUtil{
             return c;
         }
         static T map_color(const Color &c){
-            T pix;
+            T pix = 0;
             //Map Color by Loss Shift and Mask
-            pix =  (c.r >> Rloss) << Rshift;
+            pix |= (c.r >> Rloss) << Rshift;
             pix |= (c.g >> Gloss) << Gshift;
             pix |= (c.b >> Bloss) << Bshift;
             //Because Alpha may not be used,so we need to process it by Amask
@@ -1055,6 +1102,109 @@ namespace PixUtil{
     }
 
     /**
+     * @brief Split a view into several views
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @tparam Cvt Color convert function
+     * @param dst The destination views array
+     * @param channels The number of channels you want to split(1,2,3,4)
+     * @param src The source view
+     * @param cvt The color convert function
+     */
+    template<typename View1,typename View2,typename Cvt>
+    void SplitChannels(View1 *dst,int channels,const View2 &src,Cvt &&cvt){
+        PIXUTIL_ASSERT(dst != nullptr);
+        PIXUTIL_ASSERT(channels > 0 && channels <= 4);
+        PIXUTIL_ASSERT(src.width() == dst[0].width());
+        PIXUTIL_ASSERT(src.height() == dst[0].height());
+
+        using Ptr = Uint8 Color::*;
+
+        constexpr Ptr p[4] = {
+            &Color::r,
+            &Color::g,
+            &Color::b,
+            &Color::a
+        };
+        for(int y = 0;y < src.height();++ y){
+            for(int x = 0;x < src.width();++ x){
+                Color color = src[y][x];
+                for(int cur = 0;cur < channels;++ cur){
+                    dst[cur][y][x] = cvt(color.*(p[cur]));
+                }
+            }
+        }
+    }
+    /**
+     * @brief Split a view into several views
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst The destination views array
+     * @param channels The number of channels you want to split(1,2,3,4)
+     * @param src The source view
+     */
+    template<typename View1,typename View2>
+    void SplitChannels(View1 *dst,int channels,const View2 &src){
+        return SplitChannels(dst,channels,src,[](Uint8 c){return c;});
+    }
+    /**
+     * @brief Merge several views into a view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @tparam Cvt Color convert function
+     * @param dst The destination view
+     * @param src The source views array
+     * @param channels The number of channels you want to merge(1,2,3,4)
+     * @param cvt The color convert function
+     */
+    template<typename View1,typename View2,typename Cvt>
+    void MergeChannels(View1 &dst,const View2 *src,int channels,Cvt &&cvt){
+        PIXUTIL_ASSERT(src != nullptr);
+        PIXUTIL_ASSERT(channels > 0 && channels <= 4);
+        PIXUTIL_ASSERT(src[0].width() == dst.width());
+        PIXUTIL_ASSERT(src[0].height() == dst.height());
+
+        using Ptr = Uint8 Color::*;
+
+        constexpr Ptr p[4] = {
+            &Color::r,
+            &Color::g,
+            &Color::b,
+            &Color::a
+        };
+        for(int y = 0;y < src[0].height();++ y){
+            for(int x = 0;x < src[0].width();++ x){
+                Color color = {
+                    0,
+                    0,
+                    0,
+                    255
+                };
+                for(int cur = 0;cur < channels;++ cur){
+                    color.*(p[cur]) = cvt(src[cur][y][x]);
+                }
+                dst[y][x] = color;
+            }
+        }
+    }
+    /**
+     * @brief Merge several views into a view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst The destination view
+     * @param src The source views array
+     * @param channels The number of channels you want to merge(1,2,3,4)
+     */
+    template<typename View1,typename View2>
+    void MergeChannels(View1 &dst,const View2 *src,int channels){
+        MergeChannels(dst,src,channels,[](Uint8 c){return c;});
+    }
+
+    /**
      * @brief Namespace for blend (dst,src) => new
      * 
      */
@@ -1069,13 +1219,73 @@ namespace PixUtil{
             return src;
         }
     } // namespace Blend
+    
+    template<typename View1,typename View2,typename Op>
+    void Bilt(View1 &dst,const View2 &src,const Rect *dst_r,const Rect *src_r,Op blend = Blend::None){
+        Rect dst_area;
+        Rect src_area;
+        //Check args
+        if(dst_r == nullptr){
+            dst_area.x = 0;
+            dst_area.y = 0;
+            dst_area.w = dst.width();
+            dst_area.h = dst.height();
+        }
+        else{
+            dst_area = *dst_r;
+            //Clamp the area if out of range
+            dst_area.x = clamp(dst_area.x,0,dst.width());
+            dst_area.y = clamp(dst_area.y,0,dst.height());
+            dst_area.w = clamp(dst_area.w,0,dst.width() - dst_area.x);
+            dst_area.h = clamp(dst_area.h,0,dst.height() - dst_area.y);
+        }
 
+        if(src_r == nullptr){
+            src_area.x = 0;
+            src_area.y = 0;
+            src_area.w = src.width();
+            src_area.h = src.height();
+            //Clamp the area if out of range
+            src_area.x = clamp(src_area.x,0,src.width());
+            src_area.y = clamp(src_area.y,0,src.height());
+            src_area.w = clamp(src_area.w,0,src.width() - src_area.x);
+            src_area.h = clamp(src_area.h,0,src.height() - src_area.y);
+        }
+        else{
+            src_area = *src_r;
+        }
+        //TODO: Optimize if the blend is None
+
+        //Check blend is None,If so,we can use the fast way
+        void *tmp_buffer = PIXUTIL_MALLOC(
+            dst_area.w * dst_area.h * dst.bytes_per_pixel()
+        );
+        View1 tmp_view(tmp_buffer,dst_area.w,dst_area.h,dst.traits());
+        //Scale
+        BilinearScale(tmp_view,src.subview(
+            src_area.x,
+            src_area.y,
+            src_area.w,
+            src_area.h
+        ));
+        //Copy back to dst using blend
+        for(int y = 0;y < dst_area.h;++ y){
+            for(int x = 0;x < dst_area.w;++ x){
+                dst[y + dst_area.y][x + dst_area.x] = blend(
+                    dst[y + dst_area.y][x + dst_area.x],
+                    tmp_view[y][x]
+                );
+            }
+        }
+        PIXUTIL_FREE(tmp_buffer);
+    }
 } // namespace PixUtil
 
 
 #if defined(PIXUTIL_SDL_EXTERNAL)
 
 #include <SDL2/SDL_surface.h>
+#include <SDL2/SDL_endian.h>
 
 namespace PixUtil{
     /**
@@ -1135,7 +1345,7 @@ namespace PixUtil{
              * @return Uint32 
              */
             Uint32 load_pixel(const void *pixel) const{
-                Uint32 pix;
+                Uint32 pix = 0;
                 switch(bytes_per_pixel()){
                     case 1:
                         pix = *(Uint8 *)pixel;
@@ -1144,13 +1354,14 @@ namespace PixUtil{
                         pix = *(Uint16 *)pixel;
                         break;
                     case 3:
-                        pix = *(Uint32 *)pixel;
+                        pix  = *(Uint8*)pixel;
+                        pix |= *(Uint8*)((Uint8*)pixel + 1) << 8;
+                        pix |= *(Uint8*)((Uint8*)pixel + 2) << 16;
                         break;
                     case 4:
                         pix = *(Uint32 *)pixel;
                         break;
                     default:
-                        pix = 0;
                         break;
                 }
                 return pix;
@@ -1164,7 +1375,9 @@ namespace PixUtil{
                         *(Uint16 *)pixel = p;
                         break;
                     case 3:
-                        *(Uint32 *)pixel = p;
+                        *(Uint8*)pixel = p;
+                        *(Uint8*)((Uint8*)pixel + 1) = p >> 8;
+                        *(Uint8*)((Uint8*)pixel + 2) = p >> 16;
                         break;
                     case 4:
                         *(Uint32 *)pixel = p;
@@ -1283,6 +1496,10 @@ namespace PixUtil{
         SDL_SetWindowData(window,"SDLViewTexture",texture);
         //End
         SDL_FreeSurface(surface);
+    }
+    template<typename View>
+    void SDLShowView(const char *title,const View &view){
+        SDLShowView(view,title);
     }
     /**
      * @brief Wait for all window closed

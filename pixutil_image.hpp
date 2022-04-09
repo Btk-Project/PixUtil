@@ -1,5 +1,6 @@
 #if !defined(_BTK_PROJECT_PIXUTIL_IMAGE_HPP_)
 #define _BTK_PROJECT_PIXUTIL_IMAGE_HPP_
+#include <cstring>
 #include <cstdlib>
 #include <cstdint>
 #include <cstddef>
@@ -21,14 +22,14 @@
     #include <cassert>
 #endif
 //Malloc / Free
-#ifndef PIXUTIL_MALLOC
-    #define PIXUTIL_REALLOC std::realloc
-    #define PIXUTIL_MALLOC std::malloc
-    #define PIXUTIL_FREE std::free
+#ifndef PIXUTIL_IMG_MALLOC
+    #define PIXUTIL_IMG_REALLOC std::realloc
+    #define PIXUTIL_IMG_MALLOC std::malloc
+    #define PIXUTIL_IMG_FREE std::free
 #endif
 //Memset
-#ifndef PIXUTIL_MEMSET
-    #define PIXUTIL_MEMSET ::memset
+#ifndef PIXUTIL_IMG_MEMSET
+    #define PIXUTIL_IMG_MEMSET ::memset
 #endif
 //Wincodec
 #ifdef _WIN32
@@ -42,13 +43,13 @@
 
 namespace PixImage{
     inline void *Malloc(size_t size){
-        return PIXUTIL_MALLOC(size);
+        return PIXUTIL_IMG_MALLOC(size);
     }
     inline void *Realloc(void *ptr, size_t size){
-        return PIXUTIL_REALLOC(ptr, size);
+        return PIXUTIL_IMG_REALLOC(ptr, size);
     }
     inline void Free(void *ptr){
-        PIXUTIL_FREE(ptr);
+        PIXUTIL_IMG_FREE(ptr);
     }
     using ssize_t = std::ptrdiff_t;
     /**
@@ -457,6 +458,21 @@ namespace Wincodec{
 } // namespace Wincodec
 } // namespace PixImage
 
+#endif // Wincodec
+
+#if PIXUTIL_HAS_INCLUDE(<png.h>)
+#include <png.h>
+namespace PixImage{
+namespace Png{
+    inline Bitmap Load(const IOCallback &cb,int want){
+        //Load from stream using libpng
+        //TODO:
+        return {};
+    }
+} // namespace Png
+} // namespace PixImage
+
+#endif // png
 
 //Main function implementation
 namespace PixImage{
@@ -538,7 +554,7 @@ namespace PixImage{
             size_t cur;
         };
         IOCallback cb;
-        Recorder *rec = (Recorder*)PIXUTIL_MALLOC(sizeof(Recorder));
+        Recorder *rec = (Recorder*)Malloc(sizeof(Recorder));
         rec->mem = mem;
         rec->n = n;
         rec->cur = 0;
@@ -593,14 +609,10 @@ namespace PixImage{
         };
         cb.close = [](void *uptr) -> void{
             Recorder *rec = (Recorder*)uptr;
-            PIXUTIL_FREE(rec);
+            Free(rec);
         };
         return cb;
     }
 } // namespace PixImage
-
-
-
-#endif
 
 #endif // _BTK_PROJECT_PIXUTIL_IMAGE_HPP_

@@ -7,20 +7,6 @@
 
 #include "pixutil.hpp"
 
-#ifndef PIXUTIL_MALLOC
-    #define PIXUTIL_REALLOC std::realloc
-    #define PIXUTIL_MALLOC std::malloc
-    #define PIXUTIL_FREE std::free
-#endif
-
-#ifndef PIXUTIL_MEMCPY
-    #define PIXUTIL_MEMCPY ::memcpy
-#endif
-
-#ifndef PIXUTIL_MEMCMP
-    #define PIXUTIL_MEMCMP ::memcmp
-#endif
-
 namespace PixFilter{
 namespace _Math{
     constexpr double PI = 3.14159265358979323846;
@@ -122,6 +108,9 @@ namespace _Mem{
             const T *end() const{
                 return _data + _size;
             }
+            void zero(){
+                PIXUTIL_MEMSET(_data,0,sizeof(T) * _size);
+            }
         private:
             size_t _size;
             T *_data;
@@ -222,20 +211,28 @@ namespace _Mem{
             ~Matrix(){
                 PIXUTIL_FREE(_data);
             }
-            T &at(size_t row,size_t col){
+            T &at(size_t row,size_t col) noexcept{
                 PIXUTIL_ASSERT(row < _row);
                 PIXUTIL_ASSERT(col < _col);
                 return _data[row * _col + col];
             }
-            const T &at(size_t row,size_t col) const{
+            const T &at(size_t row,size_t col) const noexcept{
                 PIXUTIL_ASSERT(row < _row);
                 PIXUTIL_ASSERT(col < _col);
                 return _data[row * _col + col];
             }
-            size_t row() const{
+            size_t row() const noexcept{
                 return _row;
             }
-            size_t col() const{
+            //< For compatibility with View
+            size_t height() const noexcept{
+                return _row;
+            }
+            size_t col() const noexcept{
+                return _col;
+            }
+            //< For compatibility with View
+            size_t width() const noexcept{
                 return _col;
             }
             /**
@@ -257,6 +254,9 @@ namespace _Mem{
                 else{
                     //TODO: throw exception or something
                 }
+            }
+            void zero(){
+                PIXUTIL_MEMSET(_data,0,sizeof(T) * _row * _col);
             }
 
             T *data(){
@@ -317,6 +317,7 @@ namespace _Mem{
                 if(this == &mat){
                     return *this;
                 }
+                PIXUTIL_FREE(_data);
                 _row = mat._row;
                 _col = mat._col;
                 _data = mat._data;
@@ -347,6 +348,13 @@ namespace _Mem{
             Matrix &operator *=(Elem num){
                 for(size_t i = 0;i < _row * _col;++i){
                     _data[i] *= num;
+                }
+                return *this;
+            }
+            template<class Elem>
+            Matrix &operator /=(Elem num){
+                for(size_t i = 0;i < _row * _col;++i){
+                    _data[i] /= num;
                 }
                 return *this;
             }
@@ -384,15 +392,24 @@ namespace _Mem{
                 mat *= num;
                 return mat;
             }
+            template<typename Elem>
+            Matrix operator /(Elem num) const{
+                Matrix<T> mat(*this);
+                mat /= num;
+                return mat;
+            }
             //Dot
             Matrix &operator *=(const Matrix &mat){
                 PIXUTIL_ASSERT(_col == mat._row);
+                PIXUTIL_ASSERT(_row == mat._col);
+                //OMP Optimize
                 Matrix<T> tmp(_row,mat._col);
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < mat._col;++j){
                         tmp.at(i,j) = 0;
                         for(size_t k = 0;k < _col;++k){
-                            tmp.at(i,j) += _data[i * _col + k] * mat.at(k,j);
+                            tmp.at(i,j) += at(i,k) * mat.at(k,j);
                         }
                     }
                 }
@@ -401,12 +418,15 @@ namespace _Mem{
             }
             Matrix operator *(const Matrix &mat) const{
                 PIXUTIL_ASSERT(_col == mat._row);
+                PIXUTIL_ASSERT(_row == mat._col);
+                //OMP Optimize
                 Matrix<T> tmp(_row,mat._col);
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < mat._col;++j){
                         tmp.at(i,j) = 0;
                         for(size_t k = 0;k < _col;++k){
-                            tmp.at(i,j) += _data[i * _col + k] * mat.at(k,j);
+                            tmp.at(i,j) += at(i,k) * mat.at(k,j);
                         }
                     }
                 }
@@ -416,6 +436,7 @@ namespace _Mem{
             //Transpose
             Matrix transpose() const{
                 Matrix<T> tmp(_col,_row);
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < _col;++j){
                         tmp.at(j,i) = _data[i * _col + j];
@@ -427,9 +448,27 @@ namespace _Mem{
             Matrix inverse() const{
                 PIXUTIL_ASSERT(_row == _col);
                 Matrix<T> tmp(_row,_col);
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < _col;++j){
                         tmp.at(i,j) = _data[j * _row + i];
+                    }
+                }
+                return tmp;
+            }
+            /**
+             * @brief Map the matrix to a new matrix
+             * 
+             * @tparam Fn 
+             * @param fn 
+             * @return Matrix 
+             */
+            template<typename Fn>
+            Matrix map(Fn &&fn) const{
+                Matrix<T> tmp(_row,_col);
+                for(size_t i = 0;i < _row;++i){
+                    for(size_t j = 0;j < _col;++j){
+                        tmp.at(i,j) = fn(_data[i * _col + j]);
                     }
                 }
                 return tmp;
@@ -443,9 +482,7 @@ namespace _Mem{
 
             operator Vector<T>() const{
                 Vector<T> vec(_row * _col);
-
                 PIXUTIL_MEMCPY(vec.data(),_data,sizeof(T) * _row * _col);
-                
                 return vec;
             }
 
@@ -494,6 +531,7 @@ namespace _Mem{
 
 
 namespace PixFilter{
+    using FFTMatrix = _Mem::Matrix<std::complex<double>>;
     template<typename T>
     using Matrix = _Mem::Matrix<T>;
     template<typename T>
@@ -501,10 +539,19 @@ namespace PixFilter{
     template<typename ...Args>
     using View = PixUtil::View<Args...>;
     using Color = PixUtil::Color;
+    //Useful typedef
+    using Uint16 = PixUtil::Uint16;
+    using Uint32 = PixUtil::Uint32;
+    using Uint64 = PixUtil::Uint64;
+    using Uint8 = PixUtil::Uint8;
+    //Useful function
+    using PixUtil::clamp;
+    using PixUtil::min;
+    using PixUtil::max;
 
     //TODO: GaussianBlur
     namespace _Math{
-        inline void GaussianFliter(_Mem::Vector<float> &fliter,float sigma,int r){
+        inline void GaussianFliter(Vector<float> &fliter,float sigma,int r){
             float sum = 0;
             for (int i = 0;i<r;i++){
                 for(int j = 0;j <r;j++){
@@ -536,7 +583,76 @@ namespace PixFilter{
             }
         }
         //Fast Fourier Transform
+
+        //DFT
+        using FFTMatrix = Matrix<std::complex<double>>;
+        /**
+         * @brief Shift 
+         * 
+         * @param mat 
+         */
+        inline void FFTShift(FFTMatrix &mat){
+            //Shift to center
+            for(size_t i = 0;i < mat.row();++i){
+                for(size_t j = 0;j < mat.col();++j){
+                    mat.at(i,j) *= std::pow(-1,i + j);
+                }
+            }
+        }
+        inline void DFT(FFTMatrix &dst,const FFTMatrix &src){
+            size_t w = src.col();
+            size_t h = src.row();
+
+            FFTMatrix mat_w(w,w);
+            FFTMatrix mat_h(h,h);
+            //Prepare transform matrix
+            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+            for(size_t i = 0;i < w;++i){
+                for(size_t j = 0;j < w;++j){
+                    mat_w.at(i,j) = std::exp(std::complex<double>(0,-2 * PI * i * j / w));
+                }
+            }
+            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+            for(size_t i = 0;i < h;++i){
+                for(size_t j = 0;j < h;++j){
+                    mat_h.at(i,j) = std::exp(std::complex<double>(0,-2 * PI * i * j / h));
+                }
+            }
+            //Transform
+            dst  = mat_h * src * mat_w;
+            dst /= std::sqrt(w * h);
+        }
+        inline void IDFT(FFTMatrix &dst,const FFTMatrix &src){
+            size_t w = src.col();
+            size_t h = src.row();
+
+            FFTMatrix mat_w(w,w);
+            FFTMatrix mat_h(h,h);
+            //Prepare transform matrix
+            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+            for(size_t i = 0;i < w;++i){
+                for(size_t j = 0;j < w;++j){
+                    mat_w.at(i,j) = std::exp(std::complex<double>(0,2 * PI * i * j / w));
+                }
+            }
+            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+            for(size_t i = 0;i < h;++i){
+                for(size_t j = 0;j < h;++j){
+                    mat_h.at(i,j) = std::exp(std::complex<double>(0,2 * PI * i * j / h));
+                }
+            }
+            //Transform
+            dst  = mat_h * src * mat_w;
+            dst /= std::sqrt(w * h);
+        }
+        inline Uint8 ComplexToUint8(const std::complex<double> &c) noexcept{
+            return clamp(std::abs(c),0.0,255.0);
+        }
     }
+    using _Math::FFTMatrix;
+    using _Math::FFTShift;
+    using _Math::IDFT;
+    using _Math::DFT;
 
     template<typename View>
     void GaussianBlur(View &view,float sigma,int radius){
@@ -560,6 +676,7 @@ namespace PixFilter{
         _Math::GaussianFliter(fliter,sigma,radius);
 
         //Blur
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
         for(int i = 0;i < h;i ++){
             for(int j = 0;j < w;j ++){
                 float sum[4] = {0.0f,0.0f,0.0f,0.0f};
@@ -595,7 +712,7 @@ namespace PixFilter{
                 }
 
                 for(auto &v:sum){
-                    v = PixUtil::clamp(v,0.0f,255.0f);
+                    v = clamp(v,0.0f,255.0f);
                 }
                 buf_view[i][j] = Color{
                     static_cast<Uint8>(sum[0]),
@@ -637,11 +754,12 @@ namespace PixFilter{
         }
         #endif
         //TODO: refactor
-        int height = src.width();
-        int width = src.height();
+        int height = src.height();
+        int width = src.width();
         int filter_height = filter.row();
         int filter_width = filter.col();
         //Process one channal 
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
         for (int i = 0; i < height; i++) {
             for (int j = 0; j < width; j++) {
                 double sum[3] = {0.0,0.0,0.0};
@@ -664,7 +782,7 @@ namespace PixFilter{
                             y = 2 * width - y - 1;
                         }
 
-                        Color color = src.at(x,y);
+                        Color color = src[x][y];
 
                         sum[0] += color.r * filter.at(m, n);
                         sum[1] += color.g * filter.at(m, n);
@@ -674,18 +792,109 @@ namespace PixFilter{
                 }
                 //FIXME:It will cause output whole black if we process the alpha channal
                 for(auto &v:sum){
-                    v = PixUtil::clamp(v,0.0,255.0);
+                    v = clamp(v,0.0,255.0);
                 }
-                dst.at(i, j) = Color{
+                dst[i][j] = Color{
                     static_cast<Uint8>(sum[0]),
                     static_cast<Uint8>(sum[1]),
                     static_cast<Uint8>(sum[2]),
-                    src.at(i, j).to_color().a//So we use the original alpha
+                    src[i][j].to_color().a//So we use the original alpha
                 };
             }
         }
     }
+    /**
+     * @brief DFT a view to three matrix
+     * 
+     * @tparam View 
+     * @param outputs FFTMatrix[n]
+     * @param n Number of matrix
+     * @param src View
+     */
+    template<typename View>
+    void DFT(_Math::FFTMatrix outputs[],int n,const View &src){
+        PIXUTIL_ASSERT(n > 0 && n <= 4);
 
+        _Math::FFTMatrix *inputs = new _Math::FFTMatrix[n];
+        //Pack the view to three matrix
+        for(int i = 0;i < n;i++){
+            inputs[i].resize(src.height(),src.width());
+        }
+        PixUtil::SplitChannels(inputs,n,src);
+        //Begin DFT
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+        for(int i = 0;i < n;i ++){
+            _Math::FFTShift(inputs[i]);
+            _Math::DFT(outputs[i],inputs[i]);
+        }
+        delete [] inputs;
+    }
+    /**
+     * @brief Helper for DFT
+     * 
+     * @tparam View 
+     * @tparam N 
+     * @param src 
+     */
+    template<typename View,size_t N>
+    void DFT(_Math::FFTMatrix (&outputs)[N],const View &src){
+        static_assert(N > 0 && N <= 4,"N must be in [1,4]");
+        DFT(outputs,N,src);
+    }
+    /**
+     * @brief DFT a view to a view
+     * 
+     * @tparam View 
+     * @param dst 
+     * @param src 
+     */
+    template<typename View>
+    void DFT(View &dst,const View &src){
+        //We only process R G B channel
+        _Math::FFTMatrix outputs[3];
+        DFT(outputs,src);
+        //Done in one step
+        //Merge
+        PixUtil::MergeChannels(dst,outputs,3,_Math::ComplexToUint8);
+    }
+    /**
+     * @brief IDFT some matrix to a view
+     * 
+     * @tparam View 
+     * @param dst 
+     * @param src 
+     * @param n 
+     */
+    template<typename View>
+    void IDFT(View &dst,const _Math::FFTMatrix *src,int n){
+        PIXUTIL_ASSERT(n > 0 && n <= 4);
+        _Math::FFTMatrix *outputs = new _Math::FFTMatrix[n];
+        //Init the output
+        for(int i = 0;i < n;i++){
+            outputs[i].resize(src[i].row(),src[i].col());
+        }
+        //Begin to process
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+        for(int i = 0;i < n;i++){
+            _Math::IDFT(outputs[i],src[i]);
+            _Math::FFTShift(outputs[i]);
+        }
+        //Map to dst
+        PixUtil::MergeChannels(dst,outputs,n,_Math::ComplexToUint8);
+        delete [] outputs;
+    }
+    /**
+     * @brief IDFT
+     * 
+     * @tparam View 
+     * @param dst The output view(GrayView is a good choice)
+     * @param mat 
+     */
+    template<typename View,size_t N>
+    void IDFT(View &dst,const _Math::FFTMatrix (&mat)[N]){
+        static_assert(N > 0 && N <= 4,"N must be in [1,4]");
+        IDFT(dst,&mat,N);
+    }
     //Some useful function template
 
     /**
@@ -743,6 +952,22 @@ namespace PixFilter{
             -1.0f,  8.0f, -1.0f,
             -1.0f, -1.0f, -1.0f
         );
+    }
+    /**
+     * @brief Box blur filter
+     * 
+     * @param radius The radius of the box blur
+     */
+    inline Matrix<double> BoxBlurFilter(int radius){
+        Matrix<double> mat(radius * 2 + 1,radius * 2 + 1);
+        double sum = 0.0;
+        for(size_t i = 0;i < mat.row();i++){
+            for(size_t j = 0;j < mat.col();j++){
+                mat.at(i,j) = 1.0 / (mat.row() * mat.col());
+                sum += mat.at(i,j);
+            }
+        }
+        return mat;
     }
 }
 

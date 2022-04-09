@@ -11,6 +11,10 @@
 using namespace PixFilter;
 using namespace PixUtil;
 
+#if __has_include(<SDL2/SDL_image.h>)
+    #include <SDL2/SDL_image.h>
+#endif
+
 int main(int argc,char **argv){
     int w = 1000;
     int h = 600;
@@ -36,7 +40,9 @@ int main(int argc,char **argv){
         }
         if(event.type == SDL_DROPFILE){
             //Drop test file
-            // SDL_Surface *surf = IMG_Load(event.drop.file);
+            #if __has_include(<SDL2/SDL_image.h>)
+            SDL_Surface *surf = IMG_Load(event.drop.file);
+            #else
             auto bitmap = PixImage::LoadFromFilename(event.drop.file);
 
             if(bitmap.empty()){
@@ -55,6 +61,7 @@ int main(int argc,char **argv){
                 printf("Load failed\n");
                 continue;
             }
+            #endif
             if(SDL_ISPIXELFORMAT_ALPHA(surf->format->format)){
                 //Alpha
                 printf("Alpha format\n");
@@ -102,13 +109,33 @@ int main(int argc,char **argv){
             SDL_FreeSurface(surf);
             SDL_FreeSurface(dst);
 
+            #if !__has_include(<SDL2/SDL_image.h>)
             PixImage::Free(bitmap.pixels);
+            #endif
         }
 
         SDL_RenderClear(render);
 
         if(tex != nullptr){
-            SDL_RenderCopy(render,tex,nullptr,nullptr);
+            int win_w,win_h;
+            int tex_w,tex_h;
+
+            SDL_QueryTexture(tex,nullptr,nullptr,&tex_w,&tex_h);
+            SDL_GetWindowSize(win,&win_w,&win_h);
+            //Calc the texture rect to fit the window
+            //Keep the aspect ratio
+            SDL_Rect rect;
+            if(tex_w * win_h > tex_h * win_w){
+                rect.w = win_w;
+                rect.h = tex_h * win_w / tex_w;
+            }else{
+                rect.w = tex_w * win_h / tex_h;
+                rect.h = win_h;
+            }
+            rect.x = (win_w - rect.w) / 2;
+            rect.y = (win_h - rect.h) / 2;
+
+            SDL_RenderCopy(render,tex,nullptr,&rect);
         }
         SDL_RenderPresent(render);
     }
