@@ -46,6 +46,14 @@ namespace _Mem{
                 _size(size),
                 _data(static_cast<T*>(PIXUTIL_MALLOC(sizeof(T) * size)))
             {}
+            Vector(size_t size,T v):
+                _size(size),
+                _data(static_cast<T*>(PIXUTIL_MALLOC(sizeof(T) * size)))
+            {
+                for(size_t i = 0;i < size;++i){
+                    _data[i] = v;
+                }
+            }
             Vector(const Vector &) = delete;
             Vector(Vector &&vec):
                 _size(vec._size),
@@ -401,10 +409,9 @@ namespace _Mem{
             //Dot
             Matrix &operator *=(const Matrix &mat){
                 PIXUTIL_ASSERT(_col == mat._row);
-                PIXUTIL_ASSERT(_row == mat._col);
                 //OMP Optimize
                 Matrix<T> tmp(_row,mat._col);
-                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(tmp)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < mat._col;++j){
                         tmp.at(i,j) = 0;
@@ -418,10 +425,9 @@ namespace _Mem{
             }
             Matrix operator *(const Matrix &mat) const{
                 PIXUTIL_ASSERT(_col == mat._row);
-                PIXUTIL_ASSERT(_row == mat._col);
                 //OMP Optimize
                 Matrix<T> tmp(_row,mat._col);
-                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(tmp)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < mat._col;++j){
                         tmp.at(i,j) = 0;
@@ -436,7 +442,7 @@ namespace _Mem{
             //Transpose
             Matrix transpose() const{
                 Matrix<T> tmp(_col,_row);
-                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(tmp)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < _col;++j){
                         tmp.at(j,i) = _data[i * _col + j];
@@ -448,7 +454,7 @@ namespace _Mem{
             Matrix inverse() const{
                 PIXUTIL_ASSERT(_row == _col);
                 Matrix<T> tmp(_row,_col);
-                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+                PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(tmp)")
                 for(size_t i = 0;i < _row;++i){
                     for(size_t j = 0;j < _col;++j){
                         tmp.at(i,j) = _data[j * _row + i];
@@ -472,6 +478,22 @@ namespace _Mem{
                     }
                 }
                 return tmp;
+            }
+            /**
+             * @brief Apply a function to each element of the matrix
+             * 
+             * @tparam Fn 
+             * @param fn 
+             * @return Matrix& 
+             */
+            template<typename Fn>
+            Matrix &apply(Fn &&fn){
+                for(size_t i = 0;i < _row;++i){
+                    for(size_t j = 0;j < _col;++j){
+                        _data[i * _col + j] = fn(_data[i * _col + j]);
+                    }
+                }
+                return *this;
             }
         public:
             //Helper / cast
@@ -551,6 +573,20 @@ namespace PixFilter{
 
     //TODO: GaussianBlur
     namespace _Math{
+        template<typename T>
+        inline bool IsPowerOfTwo(T n){
+            //Kepp dividing 2
+            return n && !(n & (n - 1));
+        }
+        template<typename T>
+        inline T    ToPowerOfTwo(T n){
+            //Round up to the nearest power of 2
+            T power = 1;
+            while(power < n){
+                power *= 2;
+            }
+            return power;
+        }
         inline void GaussianFliter(Vector<float> &fliter,float sigma,int r){
             float sum = 0;
             for (int i = 0;i<r;i++){
@@ -582,10 +618,131 @@ namespace PixFilter{
                 }
             }
         }
-        //Fast Fourier Transform
-
-        //DFT
+        //2D Fast Fourier Transform type
         using FFTMatrix = Matrix<std::complex<double>>;
+        using FFTVector = Vector<std::complex<double>>;
+        using FFTComplex = std::complex<double>;
+        /**
+         * @brief Recursive 1D FFT function(from github wareya/fft)
+         * 
+         * @param outputs 
+         * @param inputs 
+         * @param size 
+         * @param gap must be 1
+         * @param inverse 
+         */
+        inline void FFT1DCore(FFTComplex *outputs,const FFTComplex *inputs,size_t size,size_t gap,bool inverse){
+            #if 0
+            //Use the recursive version
+            if(size == 1){
+                outputs[0] = inputs[0];
+                return;
+            }
+            FFT1DCore(outputs           ,inputs      ,size / 2,gap * 2,inverse);
+            FFT1DCore(outputs + size / 2,inputs + gap,size / 2,gap * 2,inverse);
+            for(size_t i = 0;i < size / 2;++i){
+                //Begin with the twiddle factor
+                FFTComplex t = outputs[i           ];
+                FFTComplex u = outputs[i + size / 2];
+
+                //Twiddle factor
+                FFTComplex twiddle = {
+                    std::cos(2 * PI * i / size),
+                    std::sin(2 * PI * i / size) * (inverse ? 1 : -1)
+                };
+                double bias_real = u.real() * twiddle.real() - u.imag() * twiddle.imag();
+                double bias_imag = u.imag() * twiddle.real() + u.real() * twiddle.imag();
+
+                //Output
+                outputs[i           ] = t + FFTComplex{bias_real,bias_imag};
+                outputs[i + size / 2] = t - FFTComplex{bias_real,bias_imag};
+            }
+            #else
+            //Use the iterative version
+            PIXUTIL_MEMCPY(outputs,inputs,sizeof(FFTComplex) * size);
+            PIXUTIL_UNUSED(gap);
+
+            int lim = int(size);
+            int len = 0;
+            while((1 << len) < lim){
+                ++ len;
+            }
+
+            Vector<int> bit(lim,0);
+            for(int i = 0;i < lim;++i){
+                bit.at(i) = (bit.at(i >> 1) >> 1) | ((i & 1) << (len - 1));
+            }
+
+            for(int i = 0;i < lim;++i){
+                if(i < bit.at(i)){
+                    FFTComplex t = outputs[i];
+                    outputs[i] = outputs[bit.at(i)];
+                    outputs[bit.at(i)] = t;
+                }
+            }
+
+            int opt = (inverse) ? 1 : -1;
+            for(int m = 1;m <= lim;m <<= 1){
+                int mh = m >> 1;
+                FFTComplex wm = {
+                    std::cos(2 * PI / m),
+                    std::sin(2 * PI / m) * opt
+                };
+                for(int i = 0;i < lim;i += m){
+                    FFTComplex w = {1,0};
+                    for(int j = i;j < i + mh;++j){
+                        FFTComplex t = outputs[j + mh] * w;
+                        FFTComplex u = outputs[j];
+                        outputs[j] = u + t;
+                        outputs[j + mh] = u - t;
+                        w *= wm;
+                    }
+                }
+            }
+            #endif
+        }
+        inline void FFT1D(FFTComplex *outputs,const FFTComplex *inputs,size_t size,bool inverse){
+            FFT1DCore(outputs,inputs,size,1,inverse);
+        }
+        //2D
+        inline void FFT2D(FFTMatrix &output,const FFTMatrix &input,bool inverse = false){
+            //2D FFT to 1D FFT
+            //First. Do 1D FFT on each row
+            //Second. Do 1D FFT on each column
+
+            //Check input row and col is power of 2
+            size_t row = input.row();
+            size_t col = input.col();
+
+            PIXUTIL_ASSERT(IsPowerOfTwo(row));
+            PIXUTIL_ASSERT(IsPowerOfTwo(col));
+            
+            //Resize output
+            output.resize(row,col);
+            //Do the first dimension
+            for(size_t i = 0;i < row;++i){
+                FFT1D(output[i],input[i],col,inverse);
+            }
+            //Do the second dimension
+
+            //TODO: Optimize here,avoid copy
+            FFTVector input_tmp(row);
+            FFTVector output_tmp(row);
+            for(size_t i = 0;i < col;++i){
+                for(size_t j = 0;j < row;++j){
+                    input_tmp[j] = output[j][i];
+                }
+                FFT1D(output_tmp.data(),input_tmp.data(),row,inverse);
+                for(size_t j = 0;j < row;++j){
+                    output[j][i] = output_tmp[j];
+                }
+            }
+            //Half the result
+            output /= std::sqrt(row * col);
+        }
+        inline void IFFT2D(FFTMatrix &output,const FFTMatrix &input){
+            FFT2D(output,input,true);
+        }
         /**
          * @brief Shift 
          * 
@@ -599,23 +756,31 @@ namespace PixFilter{
                 }
             }
         }
-        inline void DFT(FFTMatrix &dst,const FFTMatrix &src){
+        inline void DFT(FFTMatrix &dst,const FFTMatrix &src,bool inverse = false){
             size_t w = src.col();
             size_t h = src.row();
 
             FFTMatrix mat_w(w,w);
             FFTMatrix mat_h(h,h);
+            //Check is inversed
+            double v;
+            if(inverse){
+                v = 2;
+            }
+            else{
+                v = -2;
+            }
             //Prepare transform matrix
-            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(mat_w,mat_h)")
             for(size_t i = 0;i < w;++i){
                 for(size_t j = 0;j < w;++j){
-                    mat_w.at(i,j) = std::exp(std::complex<double>(0,-2 * PI * i * j / w));
+                    mat_w.at(i,j) = std::exp(std::complex<double>(0,v * PI * i * j / w));
                 }
             }
-            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(mat_w,mat_h)")
             for(size_t i = 0;i < h;++i){
                 for(size_t j = 0;j < h;++j){
-                    mat_h.at(i,j) = std::exp(std::complex<double>(0,-2 * PI * i * j / h));
+                    mat_h.at(i,j) = std::exp(std::complex<double>(0,v * PI * i * j / h));
                 }
             }
             //Transform
@@ -623,32 +788,12 @@ namespace PixFilter{
             dst /= std::sqrt(w * h);
         }
         inline void IDFT(FFTMatrix &dst,const FFTMatrix &src){
-            size_t w = src.col();
-            size_t h = src.row();
-
-            FFTMatrix mat_w(w,w);
-            FFTMatrix mat_h(h,h);
-            //Prepare transform matrix
-            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
-            for(size_t i = 0;i < w;++i){
-                for(size_t j = 0;j < w;++j){
-                    mat_w.at(i,j) = std::exp(std::complex<double>(0,2 * PI * i * j / w));
-                }
-            }
-            PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
-            for(size_t i = 0;i < h;++i){
-                for(size_t j = 0;j < h;++j){
-                    mat_h.at(i,j) = std::exp(std::complex<double>(0,2 * PI * i * j / h));
-                }
-            }
-            //Transform
-            dst  = mat_h * src * mat_w;
-            dst /= std::sqrt(w * h);
+            DFT(dst,src,true);
         }
         inline Uint8 ComplexToUint8(const std::complex<double> &c) noexcept{
             return clamp(std::abs(c),0.0,255.0);
         }
-    }
+    } // namespace _Math
     using _Math::FFTMatrix;
     using _Math::FFTShift;
     using _Math::IDFT;
@@ -676,7 +821,7 @@ namespace PixFilter{
         _Math::GaussianFliter(fliter,sigma,radius);
 
         //Blur
-        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(buf_view,fliter)")
         for(int i = 0;i < h;i ++){
             for(int j = 0;j < w;j ++){
                 float sum[4] = {0.0f,0.0f,0.0f,0.0f};
@@ -759,7 +904,7 @@ namespace PixFilter{
         int filter_height = filter.row();
         int filter_width = filter.col();
         //Process one channal 
-        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(dst,src,filter)")
         for (int i = 0; i < height; i++) {
             for (int j = 0; j < width; j++) {
                 double sum[3] = {0.0,0.0,0.0};
@@ -803,6 +948,128 @@ namespace PixFilter{
             }
         }
     }
+    //FFT 
+    template<typename View>
+    void MergeFFTMatrixToView(View &dst,const FFTMatrix inputs[],int n){
+        PIXUTIL_ASSERT(n > 0 && n <= 4);
+        #ifndef PIXUTIL_NO_RUNTIME_CHECK
+        //Check the size
+        if(inputs[0].row() != dst.height() || inputs[0].col() != dst.width()){
+            //Create a temporary buffer and begin scale
+            //TODO: Should we add a helper function to handle this?
+            //TODO: May be fill matrix extra space in 0 is better?
+            Vector<Uint8> image(
+                inputs[0].row() * inputs[0].col() * dst.bytes_per_pixel()
+            );
+            View buf_view(image.data(),inputs[0].col(),inputs[0].row(),dst.traits());
+            PixUtil::MergeChannels(buf_view,inputs,n,_Math::ComplexToUint8);
+            //Scale back
+            PixUtil::BilinearScale(dst,buf_view);
+            return;
+        }
+        #endif
+        PixUtil::MergeChannels(dst,inputs,n,_Math::ComplexToUint8);
+    }
+    /**
+     * @brief FFT2D (It requires w and h is power of 2)
+     * 
+     * @tparam View 
+     * @param outputs 
+     * @param n 
+     * @param src 
+     */
+    template<typename View>
+    void FFT2D(_Math::FFTMatrix outputs[],int n,const View &src){
+        #ifndef PIXUTIL_NO_RUNTIME_CHECK
+        //Dymamic check
+        size_t w = src.width();
+        size_t h = src.height();
+        if(!_Math::IsPowerOfTwo(w) || !_Math::IsPowerOfTwo(h)){
+            //TODO: Should we add a helper function to handle this?
+            w = _Math::ToPowerOfTwo(w);
+            h = _Math::ToPowerOfTwo(h);
+
+            Vector<Uint8> image(w * h * src.bytes_per_pixel());
+            View buf_view(image.data(),w,h,src.traits());
+            //Scale to power of 2
+            PixUtil::BilinearScale(buf_view,src);
+            //Calculate FFT
+            return FFT2D(outputs,n,buf_view);
+        }
+        #else
+        PIXUTIL_ASSERT(
+            _Math::IsPowerOfTwo(src.width()) && _Math::IsPowerOfTwo(src.height())
+        );
+        #endif
+        PIXUTIL_ASSERT(n > 0 && n <= 4);
+
+        _Math::FFTMatrix *inputs = new _Math::FFTMatrix[n];
+        //Pack the view to n matrix
+        for(int i = 0;i < n;i++){
+            inputs[i].resize(src.height(),src.width());
+        }
+        PixUtil::SplitChannels(inputs,n,src);
+        //Begin FFT
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(inputs,outputs)")
+        for(int i = 0;i < n;i ++){
+            _Math::FFTShift(inputs[i]);
+            _Math::FFT2D(outputs[i],inputs[i]);
+        }
+        delete [] inputs;
+    }
+    template<typename View,size_t N>
+    void FFT2D(_Math::FFTMatrix (&outputs)[N],const View &src){
+        static_assert(N > 0 && N <= 4,"N must be in [1,4]");
+        FFT2D(outputs,N,src);
+    }
+    /**
+     * @brief FFT2D a view to a view
+     * 
+     * @tparam View 
+     * @param dst 
+     * @param src 
+     */
+    template<typename View>
+    void FFT2D(View &dst,const View &src){
+        //We only process R G B channel
+        _Math::FFTMatrix outputs[3];
+        FFT2D(outputs,src);
+        //Done in one step
+        //Merge
+        MergeFFTMatrixToView(dst,outputs,3);
+    }
+    /**
+     * @brief Inverse FFT2D
+     * 
+     * @tparam View 
+     * @param dst 
+     * @param mats 
+     * @param n 
+     */
+    template<typename View>
+    void IFFT2D(View &dst,const _Math::FFTMatrix src[],int n){
+        PIXUTIL_ASSERT(n > 0 && n <= 4);
+        _Math::FFTMatrix *outputs = new _Math::FFTMatrix[n];
+        //Init the output
+        for(int i = 0;i < n;i++){
+            outputs[i].resize(src[i].row(),src[i].col());
+        }
+        //Begin to process
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(src,outputs)")
+        for(int i = 0;i < n;i++){
+            _Math::IFFT2D(outputs[i],src[i]);
+            _Math::FFTShift(outputs[i]);
+        }
+        //Map to dst
+        MergeFFTMatrixToView(dst,outputs,n);
+        delete [] outputs;
+    }
+    template<typename View,size_t N>
+    void IFFT2D(View &dst,const _Math::FFTMatrix (&src)[N]){
+        static_assert(N > 0 && N <= 4,"N must be in [1,4]");
+        IFFT2D(dst,src,N);
+    }
+
     /**
      * @brief DFT a view to three matrix
      * 
@@ -822,7 +1089,7 @@ namespace PixFilter{
         }
         PixUtil::SplitChannels(inputs,n,src);
         //Begin DFT
-        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(inputs,outputs)")
         for(int i = 0;i < n;i ++){
             _Math::FFTShift(inputs[i]);
             _Math::DFT(outputs[i],inputs[i]);
@@ -874,7 +1141,7 @@ namespace PixFilter{
             outputs[i].resize(src[i].row(),src[i].col());
         }
         //Begin to process
-        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic)")
+        PIXUTIL_OMP_DECL("omp parallel for schedule(dynamic) shared(outputs,src)")
         for(int i = 0;i < n;i++){
             _Math::IDFT(outputs[i],src[i]);
             _Math::FFTShift(outputs[i]);

@@ -10,6 +10,10 @@
 #define _PIXUTIL_LIBPNG_LOAD_ENTRY
 #define _PIXUTIL_WIC_LOAD_ENTRY
 #define _PIXUTIL_STB_LOAD_ENTRY
+//All image save entry macro
+#define _PIXUTIL_LIBPNG_SAVE_TABLE 
+#define _PIXUTIL_WIC_SAVE_TABLE
+#define _PIXUTIL_STB_SAVE_TABLE
 //Does has_include supported?
 #ifdef __has_include
     #define PIXUTIL_HAS_INCLUDE(X) __has_include(X)
@@ -513,6 +517,28 @@ namespace PixImage{
         Bitmap bitmap = LoadFromCallback(cb,want);
         cb.close(cb.uptr);
         return bitmap;
+    }
+    inline bool SaveToCallback(const char *type,Bitmap bitmap,const IOCallback &cb){
+        struct Entry{
+            const char *type;
+            bool (*fn)(Bitmap bitmap,const IOCallback &cb);
+        };
+
+        Entry tables [] = {
+            _PIXUTIL_LIBPNG_SAVE_TABLE
+            _PIXUTIL_WIC_SAVE_TABLE
+            {nullptr,nullptr}
+        };
+
+        for(auto entry:tables){
+            if(entry.fn == nullptr){
+                continue;
+            }
+            if(std::strcmp(type,entry.type) == 0){
+                return entry.fn(bitmap,cb);
+            }
+        }
+        return false;
     }
 
     inline IOCallback WrapFILE(FILE *f){

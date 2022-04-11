@@ -972,10 +972,50 @@ namespace PixUtil{
         PIXUTIL_ASSERT(dst.height() == src.height());
 
         for(int y = 0;y < src.height();++ y){
-            for(int x = 0;x < src.width(); ++x){
+            for(int x = 0;x < src.width();++ x){
                 dst[y][x] = src[y][x].to_pixel();
             }
         }
+    }
+    /**
+     * @brief Copy pixels from a view area to another view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst The destination view
+     * @param ox The destination x offset
+     * @param oy The destination y offset
+     * @param src The source view
+     * @param x The source x offset
+     * @param y The source y offset
+     * @param w The width of the area
+     * @param h The height of the area
+     */
+    template<typename View1,typename View2>
+    void CopyPixels(View1 &dst,int ox,int oy,const View2 &src,int x,int y,int w,int h){
+        //Check the area if out of the view
+        //Clamp x,y,w,h in src
+        x = clamp(x,0,src.w);
+        y = clamp(y,0,src.h);
+        w = clamp(w,0,src.w - x);
+        h = clamp(h,0,src.h - y);
+        //Clamp ox oy ow oh in dst
+        int ow = w;
+        int oh = h;
+        ox = clamp(ox,0,dst.w);
+        oy = clamp(oy,0,dst.h);
+        ow = clamp(w,0,dst.w - ox);
+        oh = clamp(h,0,dst.h - oy);
+        //Set w and h
+        w = ow;//< As same as output width
+        h = oh;//< As same as output height
+        //Begin copy
+        for(int cur_y = 0;cur_y < h;++ cur_y){
+            for(int cur_x = 0;cur_x < w;++ cur_x){
+                dst[oy + cur_y][ox + cur_x] = src[y + cur_y][x + cur_x].to_pixel();
+            }
+        }
+        //Done
     }
     /**
      * @brief Fill a rectangle with a color / pixel
@@ -1016,7 +1056,7 @@ namespace PixUtil{
         PIXUTIL_ASSERT(dst.height() == src.height());
 
         for(int y = 0;y < src.height();++ y){
-            for(int x = 0;x < src.width(); ++x){
+            for(int x = 0;x < src.width();++ x){
                 Color c = src[y][x];
                 Uint8 pix = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
                 dst[y][x] = pix;
@@ -1089,13 +1129,95 @@ namespace PixUtil{
                 float wx = x * in_w / out_w - in_x;
                 float wy = y * in_h / out_h - in_y;
 
-                //Get the color
+                //Map the color
                 Color c;
                 c.r = c00.r * (1 - wx) * (1 - wy) + c01.r * wx * (1 - wy) + c10.r * (1 - wx) * wy + c11.r * wx * wy;
                 c.g = c00.g * (1 - wx) * (1 - wy) + c01.g * wx * (1 - wy) + c10.g * (1 - wx) * wy + c11.g * wx * wy;
                 c.b = c00.b * (1 - wx) * (1 - wy) + c01.b * wx * (1 - wy) + c10.b * (1 - wx) * wy + c11.b * wx * wy;
                 c.a = c00.a * (1 - wx) * (1 - wy) + c01.a * wx * (1 - wy) + c10.a * (1 - wx) * wy + c11.a * wx * wy;
                 
+                dst[y][x] = c;
+            }
+        }
+    }
+    /**
+     * @brief Using Bicubic sampling to scale a view to another view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst 
+     * @param src 
+     */
+    template<typename View1,typename View2>
+    void BicubicScale(View1 &dst,const View2 &src){
+        //Bicubic sampling
+        int out_w = dst.width();
+        int out_h = dst.height();
+        int in_w = src.width();
+        int in_h = src.height();
+        //Begin sampling
+        for(int y = 0;y < out_h;++ y){
+            for(int x = 0;x < out_w;++ x){
+                //Get the source pixel
+                int in_x = x * in_w / out_w;
+                int in_y = y * in_h / out_h;
+
+                //Assert the pixel is in the source view
+                PIXUTIL_ASSERT(in_x >= 0 && in_x < in_w);
+                PIXUTIL_ASSERT(in_y >= 0 && in_y < in_h);
+
+                //Get the source pixel
+                Color c00 = src[in_y][in_x];
+                Color c01 = src[in_y][in_x + 1];
+                Color c10 = src[in_y + 1][in_x];
+                Color c11 = src[in_y + 1][in_x + 1];
+                Color c20 = src[in_y + 2][in_x];
+                Color c21 = src[in_y + 2][in_x + 1];
+                Color c30 = src[in_y + 3][in_x];
+                Color c31 = src[in_y + 3][in_x + 1];
+
+                //Get the weight
+                float wx = x * in_w / out_w - in_x;
+                float wy = y * in_h / out_h - in_y;
+
+                //Map the color
+                Color c;
+                c.r = c00.r * (1 - wx) * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c01.r * wx * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c10.r * (1 - wx) * wy * (1 - wx) * (1 - wy) + 
+                      c11.r * wx * wy * (1 - wx) * (1 - wy) + 
+                      c20.r * (1 - wx) * (1 - wy) * wx * (1 - wy) + 
+                      c21.r * wx * (1 - wy) * wx * (1 - wy) + 
+                      c30.r * (1 - wx) * wy * wx * (1 - wy) + 
+                      c31.r * wx * wy * wx * (1 - wy);
+
+                c.g = c00.g * (1 - wx) * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c01.g * wx * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c10.g * (1 - wx) * wy * (1 - wx) * (1 - wy) + 
+                      c11.g * wx * wy * (1 - wx) * (1 - wy) + 
+                      c20.g * (1 - wx) * (1 - wy) * wx * (1 - wy) + 
+                      c21.g * wx * (1 - wy) * wx * (1 - wy) + 
+                      c30.g * (1 - wx) * wy * wx * (1 - wy) + 
+                      c31.g * wx * wy * wx * (1 - wy);
+
+                c.b = c00.b * (1 - wx) * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c01.b * wx * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c10.b * (1 - wx) * wy * (1 - wx) * (1 - wy) + 
+                      c11.b * wx * wy * (1 - wx) * (1 - wy) + 
+                      c20.b * (1 - wx) * (1 - wy) * wx * (1 - wy) + 
+                      c21.b * wx * (1 - wy) * wx * (1 - wy) + 
+                      c30.b * (1 - wx) * wy * wx * (1 - wy) + 
+                      c31.b * wx * wy * wx * (1 - wy);
+
+                c.a = c00.a * (1 - wx) * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c01.a * wx * (1 - wy) * (1 - wx) * (1 - wy) + 
+                      c10.a * (1 - wx) * wy * (1 - wx) * (1 - wy) + 
+                      c11.a * wx * wy * (1 - wx) * (1 - wy) + 
+                      c20.a * (1 - wx) * (1 - wy) * wx * (1 - wy) + 
+                      c21.a * wx * (1 - wy) * wx * (1 - wy) + 
+                      c30.a * (1 - wx) * wy * wx * (1 - wy) + 
+                      c31.a * wx * wy * wx * (1 - wy);
+
                 dst[y][x] = c;
             }
         }
