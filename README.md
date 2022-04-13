@@ -10,6 +10,10 @@ written in C++17 and using templates.
 | PixFilter| [pixutil_fliter.hpp](pixutil_filter.hpp)| provide algorithms for filter|
 | PixRaster| [pixutil_raster.hpp](pixutil_raster.hpp)| provide algorithms for raster|
 
+## TODO List
+
+- [ ] Add boundy check in Rotate
+
 ## Example
 
 ```cpp

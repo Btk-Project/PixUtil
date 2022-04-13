@@ -1,9 +1,11 @@
 #if !defined(_BTK_PROJECT_PIXUTIL_VIEW_HPP_)
 #define _BTK_PROJECT_PIXUTIL_VIEW_HPP_
 
+#include <initializer_list>
 #include <type_traits>
 #include <stdexcept>
 #include <cstdint>
+#include <cmath>
 
 #ifndef PIXUTIL_ASSERT
     #define PIXUTIL_ASSERT(x) assert(x)
@@ -713,6 +715,8 @@ namespace PixUtil{
          * @return void* 
          */
         void *index_pixel(int x,int y,int bytes_per_pixel) const{
+            //Assert x,y in the view area
+            PIXUTIL_ASSERT(has_point(x,y));
             return (Uint8*)pixels + (y + y_offset)* stride + (x + x_offset)* bytes_per_pixel;
         }
         void *index_pixel_at(int x,int y,int bytes_per_pixel) const{
@@ -917,7 +921,49 @@ namespace PixUtil{
             const_pixel_reference unsafe_at(int x,int y) const{
                 return const_pixel_reference(this,x,y);
             }
-
+        public:
+            /**
+             * @brief Fill whole view with pixel / color
+             * 
+             */
+            template<typename Any>
+            void fill(Any p){
+                for(auto &row:*this){
+                    for(auto &c:row){
+                        c = p;
+                    }
+                }
+            }
+            /**
+             * @brief Filp view vertically
+             * 
+             */
+            void filp_vertical(){
+                auto &view = *this;
+                for(int y = 0;y < h / 2;y++){
+                    for(int x = 0;x < w;x++){
+                        Pix a = view[y][x];
+                        Pix b = view[h - y - 1][x];
+                        view[y][x] = b;
+                        view[h - y - 1][x] = a;
+                    }
+                }
+            }
+            /**
+             * @brief Filp view horizontally
+             * 
+             */
+            void filp_horizontal(){
+                auto &view = *this;
+                for(int y = 0;y < h;y++){
+                    for(int x = 0;x < w / 2;x++){
+                        Pix a = view[y][x];
+                        Pix b = view[y][w - x - 1];
+                        view[y][x] = b;
+                        view[y][w - x - 1] = a;
+                    }
+                }
+            }
     };
     //RGBA Common View
     template<size_t Bits,Uint32 Rmask,Uint32 Gmask,Uint32 Bmask,Uint32 Amask = 0>
@@ -1222,6 +1268,56 @@ namespace PixUtil{
             }
         }
     }
+    /**
+     * @brief Rotate a view
+     * 
+     * @tparam View1 
+     * @tparam View2 
+     * @param dst 
+     * @param src 
+     * @param angle 
+     * @param center_x The center of rotation in x(default is src center)
+     * @param center_y The center of rotation in y(default is src center)
+     */
+    template<typename View1,typename View2>
+    void Rotate(View1 &dst,const View2 &src,double angle,int center_x = -1,int center_y = -1){
+        angle = -angle;
+        double PI = 3.14159265358979323846;
+        double rad = angle * PI / 180;
+
+        if(center_x == -1){
+            center_x = src.width() / 2;
+        }
+        if(center_y == -1){
+            center_y = src.height() / 2;
+        }
+
+        double f_cos = std::cos(rad);
+        double f_sin = std::sin(rad);
+
+        auto rotate_back = [&](int x,int y){
+            double x_ = x - center_x;
+            double y_ = y - center_y;
+            double x_new = x_ * f_cos - y_ * f_sin + center_x;
+            double y_new = x_ * f_sin + y_ * f_cos + center_y;
+            return std::make_pair(x_new,y_new);
+        };
+
+        for(int y = 0;y < src.height();y++){
+            for(int x = 0;x < src.width();x++){
+                auto p = rotate_back(x,y);
+                int src_x = std::round(p.first);
+                int src_y = std::round(p.second);
+
+                //TODO:add boundary check
+                //TODO:add sampling
+
+                if(src.has_point(src_x,src_y)){
+                    dst[y][x] = src[src_y][src_x].to_color();
+                }
+            }
+        }
+    }
 
     /**
      * @brief Split a view into several views
@@ -1339,6 +1435,21 @@ namespace PixUtil{
          */
         inline Color None(Color,Color src) noexcept{
             return src;
+        }
+        /**
+         * @brief Alpha blend (dst,src) => new
+         * 
+         * @param dst 
+         * @param src 
+         * @return Color 
+         */
+        inline Color Alpha(Color dst,Color src) noexcept{
+            return Color{
+                Uint8((src.r * src.a + dst.r * (255 - src.a)) / 255),
+                Uint8((src.g * src.a + dst.g * (255 - src.a)) / 255),
+                Uint8((src.b * src.a + dst.b * (255 - src.a)) / 255),
+                Uint8((src.a + dst.a * (255 - src.a) / 255))
+            };
         }
     } // namespace Blend
     

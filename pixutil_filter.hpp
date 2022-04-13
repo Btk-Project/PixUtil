@@ -125,6 +125,53 @@ namespace _Mem{
         template<typename U>
         friend class Matrix;
     };
+    //TODO add MatrixExpr to implement lazy evaluation
+    template<typename T,size_t Row,size_t Col>
+    class MatrixBlock{
+        public:
+            MatrixBlock(T *mat,size_t row,size_t col):
+                mat(mat),
+                cur_row(row),
+                cur_col(col)
+            {}
+            MatrixBlock(const MatrixBlock &) = default;
+            MatrixBlock(MatrixBlock &&) = default;
+            ~MatrixBlock() = default;
+
+
+            MatrixBlock &operator =(const T &v){
+                //Assert v row and col
+                PIXUTIL_ASSERT(v.row() == Row);
+                PIXUTIL_ASSERT(v.col() == Col);
+                for(size_t i = 0;i < Row;++i){
+                    for(size_t j = 0;j < Col;++j){
+                        mat->at(cur_row + i,cur_col + j) = v.at(i,j);
+                    }
+                }
+                return *this;
+            }
+            template<class ...Args>
+            MatrixBlock &assign(Args &&...args){
+                static_assert(Row * Col == sizeof...(args),"num of Elem doesnot matched");
+                auto l = {args...};
+                
+                size_t row = 0;
+                size_t col = 0;
+
+                for(auto v:l){
+                    mat->at(row + cur_row,col + cur_col) = v;
+                    col += 1;
+                    if(col == Col){
+                        col = 0;
+                        row += 1;
+                    }
+                }
+            }
+        private:
+            T *mat;
+            size_t cur_row = 0;
+            size_t cur_col = 0;
+    };
     /**
      * @brief Simplest matrix
      * 
@@ -497,6 +544,13 @@ namespace _Mem{
             }
         public:
             //Helper / cast
+            template<size_t Row,size_t Col>
+            MatrixBlock<Matrix,Row,Col> block(size_t r,size_t c){
+                PIXUTIL_ASSERT(r + Row <= _row && c + Col <= _col);
+                return MatrixBlock<Matrix,Row,Col>(this,r,c);
+            }
+
+
             template<typename Elem>
             Matrix<Elem> cast() const{
                 return *this;
@@ -522,6 +576,11 @@ namespace _Mem{
             size_t _row;
             size_t _col;
             T *_data;
+    };
+    template<typename T,size_t Row,size_t Col>
+    class FixedMatrix:public Matrix<T>{
+        public:
+            FixedMatrix():Matrix<T>(Row,Col){};
     };
 
     #ifdef PIXUTIL_MATRIX_IO
@@ -553,7 +612,7 @@ namespace _Mem{
 
 
 namespace PixFilter{
-    using FFTMatrix = _Mem::Matrix<std::complex<double>>;
+    using TransformMatrix = _Mem::Matrix<double>;
     template<typename T>
     using Matrix = _Mem::Matrix<T>;
     template<typename T>
@@ -1162,6 +1221,40 @@ namespace PixFilter{
         static_assert(N > 0 && N <= 4,"N must be in [1,4]");
         IDFT(dst,&mat,N);
     }
+    //View Transform
+    template<typename View1,typename View2>
+    void Transform(View1 &dst,const View2 &src,const TransformMatrix &m){
+        #if 0
+        //Make src to dst mat
+        auto mat = m.inverse();
+        //Build done
+        Matrix<double> cur_p(3,1);
+        Matrix<double> src_p(3,1);
+
+        for(int y = 0;y < dst.height();++ y){
+            for(int x = 0;x < dst.width();++ x){
+                cur_p.at(0,0) = y - center_y;
+                cur_p.at(1,0) = x - center_x;
+                cur_p.at(2,0) = 1;
+
+                src_p = mat * cur_p;
+
+                double src_y = src_p.at(0,0);
+                double src_x = src_p.at(1,0);
+
+                if(src.has_point(src_x,src_y)){
+                    dst[y][x] = src[src_y][src_x].to_color();
+                }
+            }
+        }
+        #else
+        PIXUTIL_UNUSED(m);
+        PIXUTIL_UNUSED(src);
+        PIXUTIL_UNUSED(dst);
+        PIXUTIL_ASSERT(!"Not implemented");
+        #endif
+    }
+
     //Some useful function template
 
     /**

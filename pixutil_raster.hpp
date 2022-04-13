@@ -274,16 +274,18 @@ namespace PixRaster{
             shade(in_x * x_f,in_y * y_f);
         };
     }
-    template<typename Fn>
-    auto AddRotate(int x,int y,Fn &&shade){
-        return [=](int in_x,int in_y){
-            //Call shade
-            shade(
-                x + in_x * std::cos(y) - in_y * std::sin(y),
-                y + in_x * std::sin(y) + in_y * std::cos(y)
-            );
-        };
-    }
+    // template<typename Fn>
+    // auto AddRotate(float x,float y,Fn &&shade){
+    //     double f_cos = std::cos(x);
+    //     double f_sin = std::sin(y);
+    //     return [=](int in_x,int in_y){
+    //         //Call shade
+    //         shade(
+    //             in_x * std::cos(y) - in_y * std::sin(y),
+    //             in_x * std::sin(y) + in_y * std::cos(y)
+    //         );
+    //     };
+    // }
 } // namespace PixRaster
 
 
